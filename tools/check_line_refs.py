@@ -918,6 +918,84 @@ def holding_kind(text: str) -> str:
     return "prose"
 
 
+# The files whose lines carry COMPILED code.  For these the span mechanism
+# cannot reach: a line of C has no backticks, so `hold_matched` never finds
+# anything to anchor a number to, and the only evidence a C owner can give
+# is a SYMBOL.
+#
+# Only the compiled languages count, and that is the whole point of the
+# limit.  In a compiled language an identifier IS a symbol -- there is no
+# line of C whose `against` is a word rather than a name.  In a shell
+# script, in Python, or in a CMake file, the same token can be ordinary
+# English: the line `echo "gate: another gate is running against $BUILD_DIR"`
+# shares `against`, `another`, `gate` and `running` with any English
+# sentence, and a rule that cannot tell those from `builtin_lookup` is a
+# rule that reports evidence it has not found.  Measured on fca60a25: with
+# every suffix allowed, the symbol channel produced 234 rows, and the
+# controls in tools/holds.test.py -- whose fixture cites a shell line --
+# could not tell a coincidence from a citation.  Restricted to the compiled
+# languages the channel produces 89 rows, every one of them carrying a
+# shared identifier that is a name in both files.
+CODE_OWNER_SUFFIXES = (
+    ".c", ".h",
+)
+
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
+
+# Words that carry no evidence: they are the vocabulary of every language at
+# once, so sharing one says the two lines are both written in the same
+# language, not that the citing line is talking about the cited line.  The
+# list was built from the counterexamples, not from taste: `name`, `set`,
+# `value`, `data`, `type`, `one` and the rest all appear on both sides of
+# hundreds of real citations.
+GENERIC_WORDS = frozenset({
+    "src", "include", "docs", "tools", "int", "void", "bool", "char", "size_t",
+    "return", "if", "for", "while", "else", "const", "static", "struct",
+    "unsigned", "signed", "long", "short", "float", "double", "string",
+    "number", "true", "false", "null", "none", "all", "new", "old", "name",
+    "set", "get", "put", "add", "remove", "delete", "create", "make", "use",
+    "run", "call", "type", "value", "data", "file", "path", "line", "row",
+    "this", "that", "the", "and", "not", "you", "are", "was", "has", "had",
+    "let", "end", "then", "than", "with", "out", "one", "two", "any", "own",
+    "same", "when", "what", "which", "where", "there", "here", "does", "can",
+    "will", "must", "may", "its", "his", "her", "our", "their", "more",
+    "most", "some", "each", "both", "only", "also", "just", "very", "much",
+    "should", "would", "could", "about", "into", "from", "over", "under",
+    "before", "after", "between", "through", "during", "without", "within",
+})
+
+
+def is_code_owner(path: str | None) -> bool:
+    """Is this owner a file whose lines carry COMPILED code?"""
+    if not path:
+        return False
+    return path.endswith(CODE_OWNER_SUFFIXES)
+
+
+def symbol_evidence(citing_line: str, owner_line: str) -> list[str]:
+    """Identifiers the two lines share, minus the ones that prove nothing.
+
+    This is the evidence channel for a code owner.  A span cannot reach a
+    line of C -- there are no backticks in it -- so the `own` grade was
+    unreachable for every C citation, and the report said so by grading them
+    `picked up` even when the cited line named the very symbol the citing
+    line was about.  A shared identifier is that evidence: the citing line
+    says `builtin_lookup` and the cited line says `builtin_lookup`, which is
+    the claim a reader is checking.
+
+    The generic words are excluded because they are the vocabulary of every
+    language at once.  Sharing `name` says nothing; sharing
+    `builtin_lookup` says something.
+    """
+    mine = {m.group(0) for m in IDENTIFIER.finditer(citing_line)}
+    theirs = {m.group(0) for m in IDENTIFIER.finditer(owner_line)}
+    shared = mine & theirs
+    return sorted(
+        s for s in shared if s.lower() not in GENERIC_WORDS
+    )
+
+
+
 def paragraphs(text: str) -> list[tuple[int, int, list[str]]]:
     """(first line, last line, lines) per run of non-blank lines, 1-based.
 
@@ -954,6 +1032,7 @@ def scan() -> dict:
     held_elsewhere = 0
     held_own = 0
     held_borrowed = 0
+    held_symbol = 0
     held_picked = 0
     held_rows: list[tuple] = []
     held_attributed = 0
@@ -1128,10 +1207,58 @@ def scan() -> dict:
                         else:
                             holder_pair = hits[0]
                             grade = _grade([holder_pair[1]])
+                        # `own` says the owner's OWN name is the evidence.  The
+                        # name is on the cited line of the file the number
+                        # points into -- not on the same-numbered line of some
+                        # other file that happens to mention it.  Those two are
+                        # the same kind of accident that `picked up` is, and
+                        # the grade did not say so.  Measured on fca60a25: 48 of
+                        # the 57 `own` references were held by a file that is
+                        # not the owner at all -- docs/BOARD.md holding a
+                        # citation of tools/gate.sh, because line 54 of that
+                        # table mentions `tools/gate.sh`; and 42 of those 48
+                        # had NO holder in the owner file at all, so nothing
+                        # about the cited line was being checked.  A citation
+                        # whose owner is a source file can be forged this way:
+                        # write the owner's name on line N of any document.
+                        if grade == "own" and holder_pair[0] != owner:
+                            grade = "picked up"
+                            _supporting = [
+                                h for h in hits if _grade([h[1]]) == grade
+                            ]
+                            holder_pair = (
+                                _supporting[0] if _supporting else hits[0]
+                            )
+                        # A code owner has no backticks, so no span can reach
+                        # its line and the `own` grade is unreachable there --
+                        # which left every citation of a C file graded as free
+                        # text, even when the cited line named the very symbol
+                        # the citing line was about.  A shared identifier is
+                        # that evidence, and it is a fourth grade rather than
+                        # a redefinition of `own`: it says the two lines talk
+                        # about the same symbol, which `own` does not say.
+                        if grade == "picked up" and is_code_owner(owner):
+                            _owner_lines = _lines(owner)
+                            if (
+                                _owner_lines
+                                and 1 <= number <= len(_owner_lines)
+                            ):
+                                _syms = symbol_evidence(
+                                    line, _owner_lines[number - 1]
+                                )
+                                if _syms:
+                                    grade = "symbol"
+                                    holder_pair = (
+                                        owner,
+                                        _syms[0],
+                                        number,
+                                    )
                         if grade == "own":
                             held_own += 1
                         elif grade == "borrowed":
                             held_borrowed += 1
+                        elif grade == "symbol":
+                            held_symbol += 1
                         else:
                             held_picked += 1
                         holder_file, holder_span, matched = holder_pair
@@ -1217,6 +1344,7 @@ def scan() -> dict:
         "held_elsewhere": held_elsewhere, "no_anchor": no_anchor,
         "off_target": off_target, "out_of_range": out_of_range,
         "held_own": held_own, "held_borrowed": held_borrowed,
+        "held_symbol": held_symbol,
         "held_attributed": held_attributed, "held_no_holder": held_no_holder,
         "held_picked": held_picked, "held_rows": held_rows,
         "mention_lines": mention_lines, "inline_lines": inline_lines,
@@ -1673,12 +1801,14 @@ def main() -> int:
     # that lives only in a probe is a number the next reader will not see.
     print(
         f"check_line_refs: held -- {r['held']} total: own {r['held_own']}, "
-        f"borrowed {r['held_borrowed']}, picked up {r['held_picked']}; "
+        f"borrowed {r['held_borrowed']}, symbol {r['held_symbol']}, "
+        f"picked up {r['held_picked']}; "
         f"of those, held by another file {r['held_elsewhere']}."
     )
     print(
         f"HELD|total={r['held']}|own={r['held_own']}"
-        f"|borrowed={r['held_borrowed']}|picked={r['held_picked']}"
+        f"|borrowed={r['held_borrowed']}|symbol={r['held_symbol']}"
+        f"|picked={r['held_picked']}"
         f"|attributed={r['held_attributed']}|by-none={r['held_no_holder']}"
     )
     for rel, lineno, number, owner, grade, holder in r["held_rows"]:

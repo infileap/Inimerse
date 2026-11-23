@@ -121,6 +121,67 @@ SRC_TEXT = "\n".join(
     ]
 ) + "\n"
 
+# --- cell: `own` must be held by the OWNER -------------------------------
+#
+# A second document mentions `CMakeLists.txt` on ITS line 7.  Under the old
+# grade that was enough to report the citation as `own`: the owner's own name
+# was the holding span, and the report did not say which file the span came
+# from.  Measured on fca60a25: 48 of the 57 `own` references were held by a
+# file that is not the owner at all, and 42 of those had no holder in the
+# owner file whatsoever -- so nothing about the cited line was checked, and
+# the citation could be forged by writing the owner's name on line N of any
+# document.
+OWNER_MENTION = "docs/fix/mentions-owner.md"
+OWNER_MENTION_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "one",
+        "two",
+        "three",
+        "four",
+        "the file `CMakeLists.txt` is named here",
+    ]
+) + "\n"
+
+# The citing line: the owner of `:7` is CMakeLists.txt, by the position rule
+# (the last name ending at or before the number), and the other file's line 7
+# mentions that owner by name.
+OWN_DOC = "docs/fix/own-elsewhere.md"
+OWN_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`docs/fix/mentions-owner.md` and `CMakeLists.txt` at `:7`.\n"
+)
+
+# --- cell: a code owner and a shared symbol ------------------------------
+#
+# The citing line names a TARGET and a C file, and the cited line of that C
+# file says the very symbol the citing line says.  There are no backticks on
+# the cited line, so the span mechanism has nothing to anchor to there, and
+# the old code graded the citation as free text even though the cited line
+# named the symbol the citing line was about.
+#
+# The TARGET has to be on the line too: a line that names no TARGET is not
+# scanned at all, so a fixture without one would test nothing.
+CODE_OWNER = "src/fix/vm.c"
+CODE_DOC = "docs/fix/code-owner.md"
+CODE_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`tools/gate.sh` and `src/fix/vm.c` both name `builtin_lookup` at `:4`.\n"
+)
+CODE_OWNER_TEXT = "\n".join(
+    [
+        "/* fixture */",
+        "#include <stddef.h>",
+        "",
+        "int builtin_lookup(VM *vm, const char *name) {",
+        "    return slot_of(vm, name);",
+        "}",
+    ]
+) + "\n"
+
 
 class FakeTree:
     """Just enough of Tree for scan(): four files, no git."""
@@ -247,6 +308,82 @@ def check_span_rule() -> int:
     return failures
 
 
+def check_own_needs_the_owner() -> int:
+    """`own` must be held by the file the number points into.
+
+    The old grade called a reference `own` when the holding span was the
+    owner's own NAME -- but it never said which file the span came from.
+    Any document that mentions the owner on the same line NUMBER held it,
+    and 42 of the 48 measured cases had no holder in the owner file at all,
+    so nothing about the cited line was being checked.  A citation of a
+    source file could be forged by writing the owner's name on line N of any
+    document.
+
+    The fixture is exactly that: the owner's line 7 carries no quoted text,
+    so the owner cannot hold the citation, and another document's line 7
+    says the owner's name.
+    """
+    failures = 0
+    files = {
+        OWN_DOC: OWN_DOC_TEXT,
+        OWNER_MENTION: OWNER_MENTION_TEXT,
+        SRC: SRC_TEXT,
+    }
+    r = scan_with(files)
+    rows = r["held_rows"]
+    if len(rows) != 1:
+        print(f"check_line_refs.test.py: SETUP -- the own-elsewhere fixture "
+              f"produced {len(rows)} held references, expected 1")
+        return 2
+    row = rows[0]
+    if row[4] == "own":
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL own/elsewhere -- the citation "
+              f"of {row[3]} line {row[2]} was graded 'own' on the strength of "
+              f"{row[5][0]}:{row[5][2]}, which is not the owner")
+    if row[5][0] != row[3]:
+        # The holder is still the other file -- that is where the evidence
+        # is -- but the GRADE must not claim the owner held it.
+        if row[4] == "own":
+            failures += 1
+            print("check_line_refs.test.py: FAIL own/elsewhere -- the "
+                  "reported holder is not the owner but the grade is 'own'")
+    return failures
+
+
+def check_symbol_grade() -> int:
+    """A code owner can be held by a shared symbol.
+
+    The span mechanism reads backtick-quoted text, so it cannot reach a line
+    of code: every citation of a C file was graded as free text even when
+    the cited line named the very symbol the citing line was about.  The
+    `symbol` grade says the two lines talk about the same symbol.
+    """
+    failures = 0
+    files = {
+        CODE_DOC: CODE_DOC_TEXT,
+        OTHER: OTHER_TEXT,
+        CODE_OWNER: CODE_OWNER_TEXT,
+    }
+    r = scan_with(files)
+    rows = r["held_rows"]
+    if len(rows) != 1:
+        print(f"check_line_refs.test.py: SETUP -- the code-owner fixture "
+              f"produced {len(rows)} held references, expected 1")
+        return 2
+    row = rows[0]
+    if row[4] != "symbol":
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL symbol -- expected the grade "
+              f"'symbol' (the cited line names the symbol the citing line "
+              f"names), got {row[4]!r}")
+    if row[5][0] != row[3]:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL symbol -- the reported holder "
+              f"{row[5][0]} is not the owner {row[3]}")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -287,13 +424,16 @@ def main() -> int:
                   f"the holder {NOISE!r}, whose span holds nothing")
 
     failures += check_span_rule()
+    failures += check_own_needs_the_owner()
+    failures += check_symbol_grade()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
         return 1
     print("check_line_refs.test.py: OK -- every reported holder supports its "
-          "reported grade, in both orders, and the code spans are read the "
-          "way Markdown reads them")
+          "reported grade, in both orders; the code spans are read the way "
+          "Markdown reads them; `own` is held by the owner; a code owner "
+          "can be held by a symbol")
     return 0
 
 
