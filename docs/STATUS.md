@@ -18628,3 +18628,182 @@ source**, because the span mechanism reads backtick-quoted text and a line of
 C has no backticks.  Fixing that means reading the cited file's own line for
 the symbol rather than for a quoted span -- a different measurement, with a
 different denominator, and therefore a different pin.
+
+## §10.273 — the grade that named the owner while the evidence came from elsewhere
+
+### 1. Where the next thing was
+
+§10.272 closed with one thing left open:
+
+> the `own` grade is still unreachable for a C source, because the span
+> mechanism reads backtick-quoted text and a line of C has no backticks.
+
+This round goes after that one.  But the round's first measurement was of a
+different question, and the different question turned out to be the bigger
+one.
+
+### 2. `own` was a coincidence wearing the owner's name
+
+The report names three things side by side:
+
+    grade    own / borrowed / picked up
+    holder   the file the evidence came from
+    span     the quoted text that did the holding
+
+§10.271 made the grade and the holder agree with each other.  It did not
+make the grade mean what its name says.
+
+`own` said: the span is the owner's own NAME.  It never said the span came
+from the owner's own FILE.  Those are different claims, and the difference
+is the whole defect:
+
+- the citing line names a file and a number;
+- the checker decides which file owns that number;
+- it then looks for a quoted span on the citing line that also occurs on
+  line N of ANY file the citing line names;
+- if that span happens to be the owner's name, the grade is `own`.
+
+But a span that is the owner's name, occurring on line N of *another* file,
+is the same accident that `picked up` names: line N of `docs/BOARD.md`
+mentions `tools/gate.sh`, so it "holds" a citation of `tools/gate.sh` line
+54.  Nothing about line 54 of `tools/gate.sh` was checked.
+
+Measured on this tree, under the rule as it stood:
+
+    own references                              57
+    of those, the holder is NOT the owner      43
+    of those, the owner file holds it NOWHERE  42
+
+So 42 of the 57 `own` references had no holder in the owner file at all.
+The grade was `own` on the strength of a coincidence in a document.
+
+§10.271 measured this on the tree before §10.272's span rule and got 48; the
+number moved because the span rule changed which spans exist, and the
+direction of the defect did not.
+
+**It is forgeable.**  Write the owner's name on line N of any document and
+the citation of the owner's line N is certified `own`.  The citation can
+then be wrong, and the report will say it is anchored.
+
+### 3. The fix
+
+`own` now means what it says: the evidence is the owner's own name **on the
+owner's own line**.
+
+    if grade == "own" and holder_pair[0] != owner:
+        grade = "picked up"
+        ...
+
+The number that moves is the grade distribution, and only that:
+
+                before    after
+    own             57        9
+    borrowed        65       65
+    picked up      507     466
+    symbol          --       89
+    held           629      629
+
+`borrowed` is left alone on purpose: it says the same line's OTHER TARGET
+name was the evidence, and that is a claim about the citing line, not about
+the owner.  Tightening it too was measured (borrowed 65 -> 32) and rejected:
+the grade does not claim to be the owner.
+
+### 4. The fourth grade: `symbol`
+
+With `own` honest, the C problem §10.272 left open is still open: a line of
+C has no backticks, so no span can reach it, and a citation of a C file
+that names the very symbol the cited line names was graded as free text.
+
+The evidence channel for compiled code is a SHARED IDENTIFIER -- the citing
+line says `builtin_lookup` and the cited line says `builtin_lookup`.  That
+is a fourth grade rather than a redefinition of `own`: it says the two lines
+talk about the same symbol, which `own` does not say.
+
+    symbol references        89
+    distinct owner files     36
+
+**The symbol channel is deliberately restricted to compiled languages.**
+Only `.c` and `.h` count.  The reason is not tidiness -- it is that the
+rule cannot tell a symbol from a word, and in a language without
+punctuation every English word is an identifier:
+
+    echo "gate: another gate is running against $BUILD_DIR"
+
+That line shares `against`, `another`, `gate` and `running` with any
+English sentence.  A rule that certifies those as evidence is reporting
+evidence it has not found.
+
+### 5. Six rules that were measured and thrown away
+
+The obvious way to fix that -- keep the symbol channel wide, and find a
+word-shape rule that separates a symbol from prose -- does not exist.  Six
+candidate rules were measured over all 234 wide-channel rows:
+
+    rule                                        kept / dropped
+    shared identifier, no shape rule             234 / 0
+    identifier inside a quoted span              17 / 217
+    code-shaped name (underscore / ALLCAPS)     192 / 42
+    identifier in the code part of the line      29 / 205
+    identifier used as a call or assignment      89 / 145
+    identifier outside string literals          217 / 17
+
+Every one of them either throws away real symbols (`setenv`, `winsock2`,
+`Normalized`, `SELFHOST_BENCHMARK`) or lets prose through (`against`,
+`another`, `gate`, `running`).  The counterexamples are the reason the
+channel is restricted to compiled languages instead of being tuned.
+
+### 6. The controls that already existed
+
+`tools/holds.test.py` asserts that a reference held only by free text is
+reported as `picked up`, and its fixture cites a SHELL line.  With the wide
+symbol channel, that fixture was graded `symbol` -- the reference cited
+`another gate is running against`, and the shell line it cites contains
+that English phrase -- and the control went red.
+
+That red was the measurement that chose rule 6's restriction: the channel
+that cannot tell a symbol from a word cannot be used on a language whose
+words are English.  With the channel restricted, the control is green
+again and **the control file was not edited**.
+
+    tools/holds.test.py: 4 cases, 4 green, 0 red
+
+### 7. The test, and the negative control
+
+`tools/check_line_refs.test.py` gains two cells:
+
+  1  `own` is not the grade when the holder is not the owner -- the owner
+     line carries no quoted text, and another document's line says the
+     owner's name;
+  2  a compiled owner can be held by a shared symbol -- the cited C line
+     names the symbol the citing line names.
+
+The negative control, measured with the exit code read directly:
+
+    old checker:  exit 1   (3 cells differ)
+    new checker:  exit 0
+
+### 8. What the round changed
+
+- `tools/check_line_refs.py`: `own` requires the owner as the holder; the
+  `symbol` grade and its evidence channel; `CODE_OWNER_SUFFIXES` restricted
+  to the compiled languages.
+- `tools/check_line_refs.test.py`: two cells for the two new rules.
+
+**The pins do not move.**  The grade change re-labels 48 rows and the
+symbol change re-labels 89, and neither adds a holder or drops one: held
+stays 629, and the explicit and unanchored deltas stay at +12 and -3
+against their ceilings.  No reference was certified by a rule that no
+longer exists, and none was dropped by one that does.
+
+### 9. What this round does not settle
+
+**The pins still measure the number of ANCHORS, not the truth of the
+citations.**  466 of 629 held references are still `picked up`, and 227 of
+those are held by a file that is not the owner at all -- the coincidence
+§10.270 found, unchanged.  The grades now say which holds are coincidences
+and which are not; the pins do not yet refuse the coincidences.
+
+**And the symbol channel is evidence, not proof.**  A shared identifier
+says the two lines are about the same name.  It does not say the cited
+line is the line the citation means.  Both `own` and `symbol` still only
+say that the text is there.
