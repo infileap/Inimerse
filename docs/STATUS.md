@@ -18807,3 +18807,154 @@ and which are not; the pins do not yet refuse the coincidences.
 says the two lines are about the same name.  It does not say the cited
 line is the line the citation means.  Both `own` and `symbol` still only
 say that the text is there.
+
+## §10.274 — the pin that asks whether a hold means anything
+
+### 1. Where the next thing was
+
+§10.273 closed with this:
+
+> **The pins still measure the number of ANCHORS, not the truth of the
+> citations.**  466 of 629 held references are still `picked up`, and 227 of
+> those are held by a file that is not the owner at all -- the coincidence
+> §10.270 found, unchanged.  The grades now say which holds are coincidences
+> and which are not; the pins do not yet refuse the coincidences.
+
+The grades say it.  The pins do not.  This round makes them say it.
+
+### 2. What a hold is, and what it is not
+
+A reference is "held" when a quoted string from the citing line also occurs
+on line N of some file the citing line names.  That is the whole rule, and
+it has one property worth spelling out: the citing line of a citation
+usually names SEVERAL files at once.  A table row that says "the runtime
+does this, the script checks it, the document records it" names three, and
+the quoted string can be found on line N of one of the other two.
+
+So a hold does not always say anything about the cited line.  The file the
+number points INTO -- the owner -- is the only file whose line N can speak
+to that number.  When a hold comes from another file, the number was never
+checked at all.
+
+    held references                         629
+    of those, held by a file that is NOT
+    the owner                               236   (38%)
+
+**It is forgeable.**  Write the owner's name on line N of any document and
+the citation of the owner's line N is held.  The checker has counted these
+since the report existed -- `held_elsewhere` has been in the output for
+years -- and a number in a report is not a rule.  Nothing had to go wrong
+for the debt to sit there.
+
+### 3. What kind of debt it is
+
+Three measurements, because "236" does not say whether the number is
+growing.
+
+**It is not growing.**  Reading the count on each of the last 340 commits
+of this branch:
+
+    237 x 144    236 x 95    239 x 50    232 x 31
+    235 x 8      238 x 6      234 x 3     233 x 3
+
+The count sits in a 232-239 band.  It is a standing debt, not a growing
+one, and it is flat because the documents grow at the same rate as the
+citations in them.
+
+**It is repayable.**  234 of the 236 name a line the owner file actually
+has, so a correction on either side of the citation -- the span on the
+citing line, or the text on the cited line -- turns the coincidence into a
+real anchor.  Only 2 of the 236 point at a line the owner file does not
+have.
+
+**It is concentrated.**  Seven files produce all of it, and one of them
+produces 162 of the 236:
+
+    docs/BOARD.md                      162
+    docs/AUDIT.md                       31
+    docs/DECFY_DESIGN.md                26
+    docs/STATUS.md                      12
+    the other three                     5
+
+and the owners are the files with the most lines, which is what the rule
+predicts: the more files a citing line names and the longer the owner, the
+more chances there are for a coincidence.
+
+### 4. The pin
+
+    EXP_LINE_REFS_COINCIDENT_BASE = fca60a25...
+    EXP_LINE_REFS_COINCIDENT_DELTA_MAX = 0
+
+A ratchet, like the unanchored one: the ceiling only moves down, and only
+in the commit that pays a reference.
+
+**Why this pin has a base of its own.**  The other two deltas are measured
+against a base 2430 commits back.  Against that base this reading is 354
+and this tree reads 236 -- a delta of -118, and a ceiling of zero would
+leave 118 coincidences of headroom.  Headroom that nobody has to argue
+for is the thing a ratchet exists to refuse, so this pin measures against
+a base of its own: `fca60a25`, the commit that pinned the headings after
+§10.272, which reads 236 as well.  The delta there is +0, the ceiling is
++0, and the first coincidence added from here on is a red.
+
+**Why not an absolute ceiling instead.**  An absolute ceiling would have the
+same effect on this tree and would not need a second tree read.  It was not
+chosen because a delta is a statement about a CHANGE, and the change is the
+thing worth pinning: this branch's own work has already moved the number
+(354 -> 236, almost all of it in `docs/BOARD.md`, whose citations were
+given real anchors), and a pin that cannot see that cannot be credited
+with it.
+
+### 5. The control, in both directions
+
+The control is the mechanism, not the number.  Take a citation whose owner
+holds it, remove the span from the owner's line N, and the reference is
+still held -- by another file -- and the coincidence count moves.
+
+Measured in a clone of this tree, changing one line of
+`src/runtime/runtime.c`:
+
+    coincidental delta +1 (ceiling +0, 237 of 629 reference(s) held)
+    VERDICT|...|cause=coincidental-over-ceiling
+    exit 1
+
+**The other pins do not see it.**  In the same run the unanchored delta
+stayed at -3 and the explicit delta at +12, because the reference still had
+a holder: a coincidence is a hold, so the reference is not unanchored.
+That is the whole point -- the debt this pin names is invisible to a pin
+that only counts anchors, and it was invisible for as long as the only
+thing the checker did with the count was print it.
+
+The unit test does the same thing in miniature, with a synthetic tree: a
+citing line that names a document and then the owner, where the document's
+line 7 carries the owner's name and the owner's line 7 carries nothing.
+The reference is held, the holder is not the owner, and the coincidence is
+counted.  With the counter absent the test fails; with it present it
+passes.
+
+### 6. What the round changed
+
+- `tools/check_line_refs.py`: the `coincident` count, the pin, the base, and
+  the report line.
+
+**The other pins do not move.**  explicit +12 (expect +12), unanchored -3
+(ceiling +0) -- the new pin measures a different fact about the same
+references, and adding a fact is not a change to the old ones.
+
+### 7. What this round does not settle
+
+**The pin counts coincidences; it does not repair them.**  236 references
+are still held by a file that is not the owner, and the number only goes
+down when somebody rewrites a citation.  The pin makes the next one a
+red; it does not pay this one.
+
+**And 71 of the 236 are held by a TARGET other than the owner** -- which
+means the owner rule itself is sometimes wrong.  The position rule takes the
+last tracked name ending at or before the number, and a citing line that
+mentions a source file and then a script can make the script the owner of a
+number that belongs to the source file.  `docs/STATUS.md` line 51 is the
+example: its mentions run CMakeLists.txt, CMakeLists.txt, tools/gate.sh,
+and the position rule takes `tools/gate.sh` as the owner of a number whose
+real anchor -- `INIMERSE_NODE` -- sits on line 233 of `CMakeLists.txt`.
+The position rule is the specification and this round did not change it;
+that is a separate question with a separate answer.
