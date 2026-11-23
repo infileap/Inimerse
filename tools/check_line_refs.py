@@ -1022,23 +1022,50 @@ def scan() -> dict:
                         # of false green.  Measured on 89ec77a: 4 of 585 are
                         # `own`.
                         holder_spans = [s for _token, s, _m in hits]
-                        holder_pair = hits[0]
                         owner_text = None
                         for start, _e, token in mentions:
                             if token == owner:
                                 owner_text = line[start:_e].rstrip(".").strip()
-                        if owner_text and owner_text in holder_spans:
-                            grade = "own"
+
+                        def _grade(spans: list[str]) -> str:
+                            if owner_text and owner_text in spans:
+                                return "own"
+                            if any(
+                                token in TARGETS
+                                and line[start:_e].rstrip(".").strip() in spans
+                                for start, _e, token in mentions
+                            ):
+                                return "borrowed"
+                            return "picked up"
+
+                        grade = _grade(holder_spans)
+                        # The grade and the holder are reported side by side, so
+                        # they have to be the same piece of evidence.  The grade
+                        # used to be computed over EVERY holder's span while the
+                        # report named the FIRST one, and those two can
+                        # disagree: a reference reported as `own` whose named
+                        # holder carries `FAIL_` -- the owner's own name is not
+                        # in `FAIL_`, so that holder does not support `own`.
+                        # Measured on 9048cbb9: 27 of 640 held references had a
+                        # grade their own reported holder did not support, and
+                        # every one of the 27 had a holder that did support it.
+                        # So the holder is chosen to support the grade, and when
+                        # no single holder can, the grade follows the holder
+                        # that is reported -- a report that cannot name its
+                        # evidence is worse than one that names weaker evidence.
+                        _supporting = [
+                            h for h in hits if _grade([h[1]]) == grade
+                        ]
+                        if _supporting:
+                            holder_pair = _supporting[0]
+                        else:
+                            holder_pair = hits[0]
+                            grade = _grade([holder_pair[1]])
+                        if grade == "own":
                             held_own += 1
-                        elif any(
-                            token in TARGETS
-                            and line[start:_e].rstrip(".").strip() in holder_spans
-                            for start, _e, token in mentions
-                        ):
-                            grade = "borrowed"
+                        elif grade == "borrowed":
                             held_borrowed += 1
                         else:
-                            grade = "picked up"
                             held_picked += 1
                         holder_file, holder_span, matched = holder_pair
                         _holding_lines = _lines(holder_file)

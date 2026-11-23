@@ -2290,3 +2290,15 @@ set_tests_properties(scope_claims_regression PROPERTIES WORKING_DIRECTORY ${CMAK
 add_test(NAME scope_claims_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_scope_claims.py --self-test)
 set_tests_properties(scope_claims_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")
+
+# §10.271: the line-refs report has three fields a reader takes as one piece of
+# evidence -- the grade (own / borrowed / picked up), the holder file, and the
+# span that did the holding.  The grade was computed over the spans of EVERY
+# holder while the report named the FIRST one, and the two can disagree: 27 of
+# 640 held references reported a grade their own named holder did not support
+# (one reported `own` while its holder carried `FAIL_`, where the owner's name
+# is nowhere in `FAIL_`).  The test asserts the report agrees with itself, in
+# both orders of the holders, on a synthetic tree that reads no checkout.
+add_test(NAME line_refs_report_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_line_refs.test.py)
+set_tests_properties(line_refs_report_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")
