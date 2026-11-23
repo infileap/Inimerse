@@ -18958,3 +18958,211 @@ and the position rule takes `tools/gate.sh` as the owner of a number whose
 real anchor -- `INIMERSE_NODE` -- sits on line 233 of `CMakeLists.txt`.
 The position rule is the specification and this round did not change it;
 that is a separate question with a separate answer.
+
+## §10.275 — the citation two files can hold equally well
+
+### 1. Where the next thing was
+
+§10.274 closed with this:
+
+> **And 71 of the 236 are held by a TARGET other than the owner** -- which
+> means the owner rule itself is sometimes wrong.  The position rule takes the
+> last tracked name ending at or before the number, and a citing line that
+> mentions a source file and then a script can make the script the owner of a
+> number that belongs to the source file.  `docs/STATUS.md` line 51 is the
+> example: its mentions run CMakeLists.txt, CMakeLists.txt, tools/gate.sh,
+> and the position rule takes `tools/gate.sh` as the owner of a number whose
+> real anchor -- `INIMERSE_NODE` -- sits on line 233 of `CMakeLists.txt`.
+> The position rule is the specification and this round did not change it;
+> that is a separate question with a separate answer.
+
+That is the question this round answers.  The answer is in three parts, and
+the middle one is the part worth having.
+
+### 2. What the owner rule is, and what it is worth
+
+The owner rule is one line:
+
+    owner = None
+    for _start, end, token in mentions:
+        if end <= m.start() + 1:
+            owner = token
+
+The last tracked name ending at or before the number.  It is the
+specification, it is written down as the specification in two places in
+`tools/check_line_refs.py`, and it is what the report's `target=` label
+prints.
+
+Measured over the 629 held references, the rule and the content agree far
+more often than not:
+
+    the one file that holds it IS the owner            274
+    the one file that holds it is NOT the owner        176
+    several of the named files hold it                 197
+    no named file holds it                             552
+
+So the rule is usually right about the file.  Where it is not, it is not
+because the rule is exotic: the citing line simply mentions several files,
+and the number sits after more than one of them.
+
+**The rule is right wherever it can be checked.**  A reference written
+`path:NNN` has the file name glued to the number, and the position rule
+takes exactly that file -- 337 of the 351 references that are written that
+way agree with it, and the 14 that do not are an artefact of the check
+used to count them.  The 278 references written as a bare number, with no
+file name next to them, are the ones where the position rule is the only
+thing that has an opinion.
+
+### 3. The trap: an owner rule that cannot be wrong
+
+There is an obvious repair.  Redefine the owner as "the file that holds
+the reference", and the 176 disagreements disappear -- because the owner
+is now defined by the thing that used to disagree with it.
+
+It was measured, and it is a trap:
+
+    owner := the unique file that holds it
+    held references whose owner changes         104 of 629
+    coincidental holds afterwards                   0
+
+A coincidence is, by definition, a hold by a file that is not the owner.
+If the owner is defined to be the file that holds, then no reference is
+ever coincidental, and the count is zero for ever.  That is not a repair.
+That is a pin that measures the rule instead of the repository -- the same
+false green this checker exists to refuse, wearing a new name.
+
+**So the owner rule stays as it is.**  It is the specification, and a
+specification is not changed to make a number look better.
+
+### 4. What can be said without choosing
+
+If the checker cannot say which file a citation is about, it can still say
+that it cannot say.  A citing line that names two files whose line N both
+carry the quoted text gives the reader two answers and no way to choose
+between them.  That is measurable, and it does not involve the owner at
+all:
+
+    a reference held by two or more of the files its line names    197
+
+This count is deliberately built without the owner.  It says only that two
+of the files the citing line names carry the same text on line N.  No
+rewriting of the owner rule can move it -- if the owner rule were rewritten
+to be "the file that holds it", these references would still be held by two
+files, and the count would still be 197.  That is what makes it a reading
+of the tree rather than a reading of the rule.
+
+**Where they are.**  The whole 197 sits in six documents, and one of them
+holds 162 of them:
+
+    docs/BOARD.md                            162
+    docs/DECFY_DESIGN.md                      17
+    docs/AUDIT.md                             8
+    docs/STATUS.md                            5
+    docs/RELEASE_0.5.2.md                     4
+    docs/streams/win-source-attribution.md    1
+
+**Why they are there.**  The 197 sit on 56 citing lines, and 39 of those
+lines name ten files or more.  The concentration is not a mystery: a
+citation is ambiguous exactly when its line names several files and two of
+them happen to carry the same text on the same line number.
+
+    docs/BOARD.md line 134    22 ambiguous, the line names 35 files
+    docs/BOARD.md line 149    16 ambiguous, the line names 42 files
+    docs/BOARD.md line 289    14 ambiguous, the line names 32 files
+
+**How wide.**  133 of the 197 have exactly two holders, 42 have three, and
+two have fourteen.
+
+### 5. What it has to do with the coincidences
+
+The two are separate, and the round measured that rather than assuming it.
+
+    ambiguous and coincidental                          65
+    ambiguous only (the owner holds it too)             102
+    coincidental only (one file holds it, and it is
+    not the owner)                                     144
+
+So an ambiguous reference is usually NOT a coincidence: the owner holds it,
+and the file the content chose is a second file that also could have.  The
+two debts are orthogonal, and a citation can be either, both, or neither.
+
+That is worth stating plainly because the natural guess is the opposite:
+that "two files could hold it" and "the wrong file holds it" are the same
+thing seen twice.  They are not.  One is a citation whose file cannot be
+identified; the other is a citation whose file was identified wrongly.
+
+### 6. The pin
+
+    EXP_LINE_REFS_AMBIGUOUS_BASE = "fca60a25f60cad572be1b2181f2c56a933c3abb8"
+    EXP_LINE_REFS_AMBIGUOUS_DELTA_MAX = 0
+
+The same base as the coincidence pin, and for the same reason: it is a
+standing debt measured from the commit where the debt was last read, so
+the delta is +0 and the ceiling is +0 with no headroom to spend.  Against
+the shared base the reading would be 163 -- and the delta would be +34, with
+34 ambiguities of room to add.
+
+It is a ratchet like the others: the ceiling only ever moves down, and
+only in the commit that pays a reference.
+
+### 7. The control, in both directions
+
+The control is the mechanism.  Take a reference that exactly one of the
+named files can hold, and make a second named file carry the same text on
+the same line.  The ambiguity count moves.
+
+Measured in a clone of this tree, changing one line of
+`src/compiler/compiler.c`:
+
+    ambiguous delta +1 (ceiling +0, 198 reference(s) held by two or more
+                        of the files their line names)
+    VERDICT|...|cause=ambiguous-over-ceiling
+    exit 1
+
+**The coincidence pin does not see it.**  In the same run the coincidental
+delta stayed at +0, because the reference still had exactly one holder that
+was not the owner: it was a coincidence before the edit and it is a
+coincidence and an ambiguity after.  Two pins, two facts.
+
+The unit test does the same thing in miniature, with a synthetic tree: a
+citing line that names a document and a script, where the script's line 7
+carries the document's name and the document's line 7 carries the script's
+name.  Both hold it, so the citation is ambiguous; with the counter absent
+the test fails, with it present it passes.
+
+The test also pins the other direction: when one of the two files carries
+nothing quoted on line 7, the reference is no longer ambiguous, and the
+count must not claim it is.
+
+### 8. What the round changed
+
+- `tools/check_line_refs.py`: the `ambiguous` count, the pin, the base, and
+  the report line.
+- `tools/check_line_refs.test.py`: the ambiguity cell, with its control in
+  both directions.
+
+**The other pins do not move.**  explicit +12 (expect +12), unanchored -3
+(ceiling +0), coincidental +0 (ceiling +0) -- the new pin measures a
+different fact about the same references, and adding a fact is not a change
+to the old ones.
+
+### 9. What this round does not settle
+
+**The owner rule still answers 176 references with a file the content
+disagrees with.**  The rule is the specification and the specification was
+not changed, so the disagreements are still there -- but they are now a
+number somebody can go and look at, and 144 of them are also coincidences,
+which means the coincidence pin and the ambiguity pin point at overlapping
+places in the tree.
+
+**And the ambiguity count is an upper bound on the problem, not the
+problem.**  197 references are held by two files that could each have been
+the one; how many of those are actually cited wrongly is not something a
+checker can say, because the checker has no way to know which of the two
+the author meant.  The next step is not a better rule -- every rule tried
+on this tree so far has failed in the same way -- but shorter citing lines.
+
+**The 39 lines that name ten files or more are the whole of it.**  39
+lines out of 18,960 in the documents, carrying 162 of the 197.  A citation
+that names one file cannot be ambiguous; a citation that names forty can
+be ambiguous in dozens of ways at once.
