@@ -199,6 +199,65 @@ COINC_DOC_TEXT = (
     "`docs/fix/mentions-owner.md` is named, and `CMakeLists.txt` at `:7`.\n"
 )
 
+# --- cell: the cited FILE cannot be told apart ----------------------------
+#
+# The citing line names two files and the number belongs to the second one by
+# the position rule -- but BOTH files carry the same quoted text on line 7,
+# so the content does not choose between them.  The owner is still named the
+# same way, and the reference is still held: what is missing is the ability
+# to say WHICH file the citation is about.
+#
+# This is the shape 197 references on 9095b2ce have, and 162 of them are in
+# docs/BOARD.md alone, whose table rows name thirty files between them.
+#
+# The count deliberately does not name an owner.  A count of "the holder is
+# not the owner" would fall to zero the moment the owner rule were rewritten
+# to be "the file that holds it" -- and a pin that cannot fail measures the
+# rule rather than the tree.
+AMBIG_DOC = "docs/fix/ambiguous.md"
+AMBIG_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`tools/gate.sh` and `docs/fix/noise.md` are named, and `CMakeLists.txt` "
+    "at `:7`.\n"
+)
+# Each of the two named files carries the OTHER one's name on line 7, so the
+# quoted text of the citing line is found on line 7 of both of them.
+AMBIG_OTHER_TEXT = "\n".join(
+    [
+        "#!/bin/bash",
+        "# fixture",
+        "",
+        "echo one",
+        "echo two",
+        "echo three",
+        'echo "docs/fix/noise.md"',
+    ]
+) + "\n"
+AMBIG_NOISE_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "one",
+        "two",
+        "three",
+        "four",
+        "the path `tools/gate.sh` sits here",
+    ]
+) + "\n"
+# The same file with nothing quoted on line 7 at all, so it cannot hold.
+AMBIG_NOISE_PLAIN_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "one",
+        "two",
+        "three",
+        "four",
+        "nothing is quoted on this line",
+    ]
+) + "\n"
+
 
 class FakeTree:
     """Just enough of Tree for scan(): four files, no git."""
@@ -459,6 +518,59 @@ def check_coincidence_is_counted() -> int:
     return failures
 
 
+def check_ambiguity_is_counted() -> int:
+    """A reference two files can hold is ambiguous, and counted.
+
+    The line names two files and both carry the quoted text on line 7, so
+    the content cannot say which one the number is about.  The reference is
+    still held -- and the report still names one owner -- but the reader has
+    no way to know that a second file would have answered the same way.
+
+    The count is what the pin reads, and it must not depend on the owner
+    rule: a count that compared the holder with the owner would go to zero
+    the moment the owner rule were rewritten to be "the file that holds it".
+    """
+    failures = 0
+    files = {
+        AMBIG_DOC: AMBIG_DOC_TEXT,
+        OTHER: AMBIG_OTHER_TEXT,
+        NOISE: AMBIG_NOISE_TEXT,
+    }
+    r = scan_with(files)
+    ambiguous = r.get("ambiguous")
+    if ambiguous is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL ambiguity -- the report does "
+              "not count references that two of the named files can hold, so "
+              "an undecidable citation cannot be told from a decided one")
+        return failures
+    if len(ambiguous) != 1:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL ambiguity -- expected 1 "
+              f"ambiguous reference, got {len(ambiguous)}: {ambiguous!r}")
+        return failures
+    rel, lineno, number, holders = ambiguous[0]
+    if rel != AMBIG_DOC:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL ambiguity -- the ambiguity was "
+              f"reported against {rel!r}, expected {AMBIG_DOC!r}")
+    if sorted(holders) != sorted([OTHER, NOISE]):
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL ambiguity -- the ambiguity names "
+              f"the holders {holders!r}, expected both {OTHER!r} and {NOISE!r}: "
+              f"the two files that carry the text on line {number} are the "
+              f"ones the citation cannot be told apart from")
+    # And it must NOT be counted when only one file carries the text.
+    files[NOISE] = AMBIG_NOISE_PLAIN_TEXT
+    r2 = scan_with(files)
+    if r2.get("ambiguous"):
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL ambiguity -- a reference only "
+              f"one of the named files can hold was counted as ambiguous: "
+              f"{r2['ambiguous']!r}")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -502,6 +614,7 @@ def main() -> int:
     failures += check_own_needs_the_owner()
     failures += check_symbol_grade()
     failures += check_coincidence_is_counted()
+    failures += check_ambiguity_is_counted()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
@@ -510,7 +623,8 @@ def main() -> int:
           "reported grade, in both orders; the code spans are read the way "
           "Markdown reads them; `own` is held by the owner; a code owner "
           "can be held by a symbol; a hold by a file that is not the owner is "
-          "counted as a coincidence")
+          "counted as a coincidence; a reference two of the named files can "
+          "hold is counted as ambiguous")
     return 0
 
 

@@ -588,6 +588,48 @@ EXP_LINE_REFS_COINCIDENT_DELTA_MAX = int(
     os.environ.get("EXP_LINE_REFS_COINCIDENT_DELTA_MAX", "0")
 )
 
+# ---------------------------------------------------------------------------
+# The pin that asks whether the CITED FILE can be told apart at all.
+#
+# The coincidence pin above measures a reference held by a file that is not
+# the owner.  This one measures the thing that makes that possible: a citing
+# line that names SEVERAL files can have the same line N in more than one of
+# them carry the quoted text, and then the content evidence does not say which
+# file the number belongs to.  Such a reference is AMBIGUOUS: two of the files
+# the line names could be the one it cites, and the text cannot tell them
+# apart.
+#
+# This is the upstream of the coincidences.  docs/BOARD.md's table rows name
+# thirty files between them, so a row that cites one of them is ambiguous
+# whenever two of the thirty happen to share the quoted text on the same line
+# number.  Measured on 9095b2ce: 197 references are ambiguous, and 162 of them
+# are in docs/BOARD.md alone.
+#
+# WHY THE OWNER RULE IS NOT PART OF THIS COUNT.  The obvious way to say "the
+# cited file cannot be told apart" is to compare the content holder with the
+# owner, and that would have been a pin that cannot fail.  The owner rule is
+# "the last tracked name ending at or before the number", and a rule of that
+# shape can be REWRITTEN to be "the file that holds it" -- and then the
+# comparison is true by definition and the count is zero for ever, which is a
+# number that measures the rule rather than the repository.  This count says
+# only that two of the files the citing line names both carry the text on
+# line N.  It does not name an owner at all, so no rewriting of the owner
+# rule can move it, and it is zero only when the documents stop naming two
+# files at once for the same number.
+#
+# WHY IT HAS THE SAME BASE AS THE COINCIDENCE PIN.  Both are ratchets against
+# the same standing debt, and both were measured from the same commit, so one
+# base read serves both.  The base reads 197 here as well, so the delta is +0
+# and the ceiling is +0: the first ambiguous reference added from here on is a
+# red.
+EXP_LINE_REFS_AMBIGUOUS_BASE = os.environ.get(
+    "EXP_LINE_REFS_AMBIGUOUS_BASE",
+    "fca60a25f60cad572be1b2181f2c56a933c3abb8",
+)
+EXP_LINE_REFS_AMBIGUOUS_DELTA_MAX = int(
+    os.environ.get("EXP_LINE_REFS_AMBIGUOUS_DELTA_MAX", "0")
+)
+
 # Every writing that must still be in the input set.  A prefix scan satisfies
 # the first two and none of the others, which is exactly the failure this list
 # exists to catch.
@@ -1084,6 +1126,7 @@ def scan() -> dict:
     held_picked = 0
     held_rows: list[tuple] = []
     coincident: list[tuple] = []
+    ambiguous: list[tuple] = []
     held_attributed = 0
     held_no_holder = 0
     no_anchor: list[tuple] = []
@@ -1192,6 +1235,33 @@ def scan() -> dict:
                     # of `no_anchor` too would have silently re-based the
                     # unanchored delta, which is pinned.
                     owner_lines = _lines(owner) if owner else None
+                    # The cited FILE cannot be told apart: two of the files
+                    # this line names carry the same quoted text on line N.
+                    #
+                    # The owner is not part of this count, and that is the
+                    # point.  A count of "the holder is not the owner" would
+                    # go to zero the moment the owner rule were rewritten to
+                    # be "the file that holds it", and a pin that cannot fail
+                    # measures the rule rather than the tree.  This one says
+                    # only that the content does not choose between the
+                    # files, so no rewriting of the owner rule can silence
+                    # it.
+                    #
+                    # It is counted for every reference with a hold, including
+                    # the ones the owner rule sends to `out_of_range`: an
+                    # out-of-range reference is ambiguous exactly as much as
+                    # a held one, and the reason it is out of range is often
+                    # that the owner rule named the wrong file.  Measured on
+                    # 9095b2ce: docs/BOARD.md line 64 cites :241, the owner
+                    # rule names a 160-line document, and two of the files
+                    # the line names carry the text on line 241.
+                    _holders_here = sorted(
+                        {token for token, _s, _m in hits}
+                    )
+                    if len(_holders_here) >= 2:
+                        ambiguous.append(
+                            (rel, lineno, number, _holders_here)
+                        )
                     if hits and owner_lines and number > len(owner_lines):
                         out_of_range.append(
                             (rel, lineno, number, owner, len(owner_lines))
@@ -1425,6 +1495,7 @@ def scan() -> dict:
         "held_attributed": held_attributed, "held_no_holder": held_no_holder,
         "held_picked": held_picked, "held_rows": held_rows,
         "coincident": coincident,
+        "ambiguous": ambiguous,
         "mention_lines": mention_lines, "inline_lines": inline_lines,
         "files": files, "citations": citations,
     }
@@ -1841,13 +1912,42 @@ def main() -> int:
         coincidence = None
     cell("coincidental-over-ceiling", needs_inputs, coincidence)
 
+    # The ambiguity pin.  Same base as the coincidence pin, same kind of
+    # ratchet, and the refusal names the base it measured against for the same
+    # reason: a delta without its base is a number with no subject.
+    amb_base, amb_behind = base_scan(EXP_LINE_REFS_AMBIGUOUS_BASE)
+    amb_delta = len(r["ambiguous"]) - len(amb_base["ambiguous"])
+    if amb_delta > EXP_LINE_REFS_AMBIGUOUS_DELTA_MAX:
+        shown = ", ".join(
+            f"{rel}:{lineno} -> :{number} (held by {', '.join(holders)})"
+            for rel, lineno, number, holders in r["ambiguous"][:5]
+        )
+        ambiguity = (
+            f"ambiguous references: {amb_delta:+d} since base "
+            f"{EXP_LINE_REFS_AMBIGUOUS_BASE} "
+            f"({len(amb_base['ambiguous'])} -> {len(r['ambiguous'])}), over "
+            f"the ceiling EXP_LINE_REFS_AMBIGUOUS_DELTA_MAX="
+            f"{EXP_LINE_REFS_AMBIGUOUS_DELTA_MAX:+d} -- "
+            f"{amb_delta - EXP_LINE_REFS_AMBIGUOUS_DELTA_MAX} more "
+            f"reference(s) are held by two or more of the files their line "
+            f"names, so the text cannot say which file the number belongs "
+            f"to.  First: {shown}"
+        )
+    else:
+        ambiguity = None
+    cell("ambiguous-over-ceiling", needs_inputs, ambiguity)
+
     print(
         f"check_line_refs: pins -- explicit delta {explicit_delta:+d} (expect "
         f"{EXP_LINE_REFS_DELTA:+d}), unanchored delta {unanchored_delta:+d} "
         f"(ceiling {EXP_LINE_REFS_UNANCHORED_DELTA_MAX:+d}), coincidental "
         f"delta {coinc_delta:+d} (ceiling "
         f"{EXP_LINE_REFS_COINCIDENT_DELTA_MAX:+d}, "
-        f"{len(r['coincident'])} of {r['held']} reference(s) held)."
+        f"{len(r['coincident'])} of {r['held']} reference(s) held), ambiguous "
+        f"delta {amb_delta:+d} (ceiling "
+        f"{EXP_LINE_REFS_AMBIGUOUS_DELTA_MAX:+d}, "
+        f"{len(r['ambiguous'])} reference(s) held by two or more of the files "
+        f"their line names)."
     )
     # worktree= counts entries and now names their contents by digest:
     # "dirty(3)" in one checkout and "dirty(2)" in another were the same logical
