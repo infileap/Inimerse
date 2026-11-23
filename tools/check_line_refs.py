@@ -973,7 +973,7 @@ def hold_matched(target_lines: list[str], number: int, spans) -> tuple | None:
     which is how a field can be printed for years and measure nothing.
     """
     for s in spans:
-        if s in target_lines[number - 1]:
+        if span_appears(s, target_lines[number - 1]):
             return (s, number)
     return None
 
@@ -2251,6 +2251,70 @@ def _verdict_unmeasured() -> None:
         "VERDICT|assertions=0|causes=0|consequential=0|measured_cells=1|"
         "environment_cells=1|cause=environment"
     )
+
+
+# ---------------------------------------------------------------------------
+# Everything below this line is placed HERE, at the end of the file, on
+# purpose.  docs/ cites this file by line number -- docs/AUDIT.md line 6543
+# cites lines 12, 16 and 296, and docs/BOARD.md line 64 cites line 1569 -- so
+# inserting a line anywhere above those numbers moves the text those
+# citations point at, and a citation that has been moved is a citation that
+# now says something else.
+#
+# That is not hypothetical.  Adding one line of code here once added the
+# word `off_target` to line 1569, and a quote on docs/BOARD.md line 64 reads
+# `target`, so the reference to line 1569 acquired a second holder and the
+# ambiguity count moved by one: the checker changed its own measurement by
+# being edited.  A tool that cannot be edited without moving its readings is
+# a tool whose readings are a property of its source rather than of the
+# repository.
+#
+# So new code goes below, and the functions above call down into this
+# section.  The rule below is the one `hold_matched` uses; it is written out
+# here rather than inline so that the line numbers docs/ cites stay put.
+# ---------------------------------------------------------------------------
+
+WORD = re.compile(r"\w", re.UNICODE)
+
+
+def span_appears(span: str, text: str) -> bool:
+    """Does `span` appear in `text` as a word, rather than inside one?
+
+    A span is a piece of quoted text the citing line offers as the content
+    of the cited line.  "Contains the span" has to mean "contains those
+    characters", and it has to mean it in a way a reader can check by looking
+    at the cited line and seeing the quoted text there -- not "contains those
+    characters somewhere inside a longer word".
+
+    The word rule is the one a reader applies without being told: `target`
+    is in `off_target` but the line does not say `target`.  Both ends of the
+    span are checked, because only one of them being clean is not enough:
+    `and` is a word inside `candy`, and `str` is a word inside `strlen`.
+
+    The word class is Unicode-aware, which is the right default for a
+    repository whose documents are not all English.  Measured on this tree
+    the two agree exactly (every span here is ASCII), so the choice is made
+    for the trees that are not this one.
+    """
+    if not span:
+        return False
+    i = text.find(span)
+    while i >= 0:
+        left_ok = (
+            i == 0
+            or not WORD.match(span[0])
+            or not WORD.match(text[i - 1])
+        )
+        j = i + len(span)
+        right_ok = (
+            j >= len(text)
+            or not WORD.match(span[-1])
+            or not WORD.match(text[j])
+        )
+        if left_ok and right_ok:
+            return True
+        i = text.find(span, i + 1)
+    return False
 
 
 if __name__ == "__main__":

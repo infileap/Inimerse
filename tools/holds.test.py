@@ -110,24 +110,17 @@ def shift_target(tree: pathlib.Path, by: int = 3) -> None:
     path.write_text("".join(lines), encoding="utf-8")
 
 
-def guess_attribution(tree: pathlib.Path, restore: bool = False) -> bool:
-    path = tree / TOOL
-    text = path.read_text(encoding="utf-8")
-    good = "for s in spans:\n                                if s in target_lines[number - 1]:"
-    bad = "for s in spans:\n                                if True:"
-    if restore:
-        if bad not in text:
-            return False
-        path.write_text(text.replace(bad, good), encoding="utf-8")
-        return True
-    if good not in text:
-        return False
-    path.write_text(text.replace(good, bad), encoding="utf-8")
-    return True
-
-
+# The hold rule, as it is WRITTEN in the checker.  These three shapes are the
+# rule's source text, and the negative controls below replace one with
+# another to see whether the assertion catches the difference.
+#
+# The rule says a quoted span holds a number when the span appears in the
+# cited line AS A WORD.  The word part is a call to `span_appears`, which
+# lives at the end of the checker file; the controls below mutate the CALL,
+# not the helper, because mutating the helper would mean rewriting the word
+# rule itself, and the word rule is what this file is not testing.
 RULE_SAME = '''    for s in spans:
-        if s in target_lines[number - 1]:
+        if span_appears(s, target_lines[number - 1]):
             return (s, number)
     return None'''
 
@@ -138,7 +131,7 @@ RULE_GUESS = '''    for s in spans:
 
 RULE_WIDE = '''    for k in range(max(0, number - 4), min(len(target_lines), number + 3)):
         for s in spans:
-            if s in target_lines[k]:
+            if span_appears(s, target_lines[k]):
                 return (s, k + 1)
     return None'''
 

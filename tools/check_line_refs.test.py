@@ -571,6 +571,117 @@ def check_ambiguity_is_counted() -> int:
     return failures
 
 
+# A span is a piece of quoted text.  The cited line must CONTAIN that text,
+# not merely contain its letters inside a longer word.  These are the
+# fixtures for that rule, and the two directions matter: a fragment must not
+# hold, and a real word must still hold.
+#
+# The owner is tools/gate.sh because a citing line has to name a TARGET for
+# the scan to look at it at all -- a fixture whose owner is not a TARGET is
+# never read, which is a property of the scan, not of the rule.
+WORD_DOC = "docs/fix/word-boundary.md"
+WORD_OWNER = "tools/gate.sh"
+WORD_DOC_TEXT = (
+    "the line names `tools/gate.sh` and quotes `target`, and the number is "
+    "`:7`.\n"
+    "second line, nothing quoted here.\n"
+    "third line.\n"
+    "fourth line.\n"
+    "fifth line.\n"
+    "sixth line.\n"
+    "seventh line.\n"
+)
+# Line 7 says `off_target`, which CONTAINS the letters of `target` but does
+# not say `target`.  The old rule held the reference on that basis.
+WORD_FRAGMENT_TEXT = (
+    "line one\n"
+    "line two\n"
+    "line three\n"
+    "line four\n"
+    "line five\n"
+    "line six\n"
+    "echo \"$off_target\"\n"
+)
+# The same line, with the word itself in it.
+WORD_REAL_TEXT = (
+    "line one\n"
+    "line two\n"
+    "line three\n"
+    "line four\n"
+    "line five\n"
+    "line six\n"
+    "echo \"$target\"\n"
+)
+
+
+def check_word_boundary() -> int:
+    """A span must be a word in the cited line, not a fragment of one.
+
+    The evidence for "this number exists" is a quoted string on the cited
+    line.  The rule used to be a bare substring test, so `target` was found
+    inside `off_target` and `str` inside `strlen` -- a coincidence of
+    letters was accepted as a quote, and the report then said "held" about a
+    line that does not contain the quote at all.
+
+    Both directions are asserted: the fragment must NOT hold, and the word
+    must still hold.  A rule that only refuses is a rule that refuses
+    everything.
+    """
+    failures = 0
+
+    # cell 1: the fragment does not hold
+    files = {
+        WORD_DOC: WORD_DOC_TEXT,
+        WORD_OWNER: WORD_FRAGMENT_TEXT,
+    }
+    r = scan_with(files)
+    if r["held_rows"]:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL word/fragment -- the reference "
+              f"was held by {r['held_rows'][0][5][1]!r} inside a longer word; "
+              f"a span is a word in the cited line, not a fragment of one: "
+              f"{r['held_rows']!r}")
+    if r["no_anchor"]:
+        # The reference must now be reported as unanchored, not as held.
+        pass
+
+    # cell 2: the word itself still holds
+    files[WORD_OWNER] = WORD_REAL_TEXT
+    r2 = scan_with(files)
+    if len(r2["held_rows"]) != 1:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL word/real -- the word itself "
+              f"should still hold the reference, but {len(r2['held_rows'])} "
+              f"reference(s) are held: {r2['held_rows']!r}")
+    elif r2["held_rows"][0][5][1] != "target":
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL word/real -- the hold was "
+              f"attributed to {r2['held_rows'][0][5][1]!r}, expected 'target'")
+
+    # cell 3: the rule itself, stated directly, so the fixture above is not
+    # the only thing that has to be right
+    appears = getattr(C, "span_appears", None)
+    if appears is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL word/rule -- the checker has no "
+              "rule for whether a span is a word in the cited line, so a "
+              "quoted string can only ever be matched as a bare substring")
+        return failures
+    for span, text, want in (
+        ("target", '"off_target": off_target,', False),
+        ("target", "the target of the run", True),
+        ("and", "candy", False),
+        ("str", "strlen(x)", False),
+        ("src/fix/vm.c", "the file src/fix/vm.c is named", True),
+    ):
+        got = appears(span, text)
+        if got != want:
+            failures += 1
+            print(f"check_line_refs.test.py: FAIL word/rule -- span {span!r} "
+                  f"in {text!r}: expected {want}, got {got}")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -615,6 +726,7 @@ def main() -> int:
     failures += check_symbol_grade()
     failures += check_coincidence_is_counted()
     failures += check_ambiguity_is_counted()
+    failures += check_word_boundary()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
@@ -624,7 +736,8 @@ def main() -> int:
           "Markdown reads them; `own` is held by the owner; a code owner "
           "can be held by a symbol; a hold by a file that is not the owner is "
           "counted as a coincidence; a reference two of the named files can "
-          "hold is counted as ambiguous")
+          "hold is counted as ambiguous; a span is a word in the cited line, "
+          "not a fragment of one")
     return 0
 
 
