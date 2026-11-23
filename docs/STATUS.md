@@ -18118,3 +18118,189 @@ absent rather than that the test should be exempt.
 If a file fails to parse AND has its asserts behind a construct the line scan
 misses, it is still dropped -- but it is dropped from a branch that now exists and
 is named, rather than from a branch that conflated two kinds of empty.
+
+## §10.270 — the comment that said "no stage" while the gate answered 1
+
+### 1. Where the next thing was
+
+§10.269 audited the parse-failure branch of `check_python_asserts.py` and found
+that a file which does not parse is no longer counted as a clean file.  The
+round's own boundary named what that left out, and this round read the other
+half of the same family: **the words a document writes next to a row of the
+gate's own scope table**.
+
+`tools/gate.sh` carries a `REQUIRED_SCOPES` table: for each changed subtree,
+which stages it forces.  Beside every row is a comment saying why the row is
+written the way it is.  Those comments are what a reader uses to decide whether
+a change is covered -- and until this round, **nothing was reading them**.
+
+### 2. The defect, measured
+
+The `.github/*` row read:
+
+    # .github/* -- no reader and no stage: CI is CI's own business.
+
+It says **no stage**.  The gate says otherwise:
+
+    $ bash tools/gate.sh --required-for .github/workflows/linux-build.yml
+    required: 1 stage
+
+One stage, because all four files under `.github/` end `.yml`, `.yml` is in
+`tools/check_text_integrity.py`'s `TEXT_SUFFIXES`, and the glob fallback at the
+end of `stages_for_path` adds that stage **whatever the row says**.  The row's
+own selector is `-`, which contributes nothing of its own; the stage arrives
+from the fallback, not from the row.
+
+So the comment described a different thing than the line under it -- the same
+shape as the preset table's `kong (empty set)` in an earlier round, and the
+same shape as the fenced examples in §10.249: **the prose is not the behaviour,
+and nothing checked**.
+
+### 3. The instrument, and what it cost to build it
+
+`tools/check_scope_claims.py` reads the scope table's comments and reads the
+gate's own answer to the same question, and compares them.  It asks
+`--required-for` rather than re-implementing the derivation, because the
+derivation has three sources (the scope rows, the derived call-site edges, and
+the text-suffix fallback) and a second implementation of a three-source
+derivation is a third source.
+
+Asking `--required-for` needs a CHANGE, not a clean file: `--required-for
+<path>` means "the unstaged changes to that path", so a clean tree answers 0.
+The first version of this read that 0 as the row's answer and reported
+`CMakeLists.txt` as forcing nothing.  The fix is to touch the file, stage the
+touch alone, ask `--required-for staged`, and restore both the file and the
+index afterwards.
+
+The claim vocabulary is deliberately small -- `no stage`, `every stage`, `N
+stage(s)` -- because a comment that mentions a stage is not a claim about one.
+The `no stage` pattern is the one that was wrong, and it was wrong twice:
+
+    NO_STAGE = re.compile(r"\bno\s+stage\b(?!\s*(?:answers|runs|is|to|[\"”]))", re.I)
+
+The file's own docstring gives the CORRECT wording for the `.github/*` row:
+
+    no READER, and the `-` says this row forces no stage of its own
+
+`no stage of its own` -- and `of` was not in the exclusion list, so the pattern
+matched the sentence the file itself prescribes and reported the row it had
+just fixed.  The one-line form the gate actually carries ends the same way:
+
+    no READER; the `-` says this row forces no stage (the .yml files are still
+    covered by text-integrity's glob fallback).
+
+so `(` had to be excluded as well.  Both were found by running the checker
+against the row it was written for, which is the only place a pattern like this
+can be caught.
+
+**The self-test had no case for the file's own prescribed wording.**  That
+omission is the defect: a pattern whose own docstring quotes a sentence the
+pattern rejects is a pattern that will reject it again.  The table now carries
+both forms as expected-`[]` cases, plus a positive control (`build/* -- this
+row forces no stage` -> `[("no-stage", 0)]`) so the widening cannot swallow
+every claim.
+
+### 4. The cost, measured: a green gate turned red by nine lines
+
+Registering the stage needed a `stage_scope_claims` function in `tools/gate.sh`,
+which is nine lines, which broke the gate for a reason that named neither the
+stage nor the checker:
+
+    $ python3 tools/check_line_refs.py
+    check_line_refs: pins -- explicit delta +12 (expect +12),
+                       unanchored delta +3 (ceiling +0).
+
+Six references lost their anchor.  The mechanism was not a drift and not a
+stale baseline; it was this:
+
+`check_line_refs.py` grades a hold in three levels.  `own` is the file's own
+line carrying the quoted span; `borrowed` is another file the line names
+carrying it; **`picked up` is free text on that other file's line at the same
+line NUMBER**.  Six references were held ONLY at `picked up` grade, and the
+holders were:
+
+    BOARD.md line 135 -> parser.c number 1286
+        held by gate.sh line 1286, span "with"
+        (# GATE_SHARED_TMP_ROOT exists so the two directions can be shown without)
+
+    BOARD.md line 143 -> runtime_posix.c number 1064
+        held by gate.sh line 1064, span "stage"
+    BOARD.md line 159 -> runtime_posix.c number 1042
+        held by gate.sh line 1042, span "--required-for"
+    BOARD.md line 161 -> vm.c number 1104
+        held by gate.sh line 1104, span "docs/BOARD.md"
+    AUDIT.md line 3387 -> CMakeLists.txt number 1042
+        held by gate.sh line 1042, span "--required-for"
+
+`docs/BOARD.md` line 135 cites `src/parser/parser.c` line 1286.  Its quoted
+span `with` was found on `tools/gate.sh`'s line 1286 -- because that line
+happens to end in the word `without`.  Nothing about the citation was checked;
+the number was *carried* by a coincidence of line numbers between two
+unrelated files.
+
+Nine lines inserted anywhere above 1286 moved those four gate.sh lines, and
+the six references went back to `no_anchor`.  Measured, position by position:
+
+    8-line insertion at gate.sh line  878 -> no_anchor 564 (+5)
+    8-line insertion at gate.sh line 1201 -> no_anchor 564 (+5)
+    8-line insertion at gate.sh line 1301 -> no_anchor 564 (+5)
+    8-line insertion after gate.sh line 1286 -> no_anchor 559 (+0)
+
+The highest gate.sh line that holds anything is **1286**.  Every edit to
+`tools/gate.sh` that adds lines must land below it -- which is a strange
+constraint to discover through a red gate, and one that will keep being
+discovered until the `picked up` grade is either removed or made honest.
+
+### 5. Three more rules the same round found
+
+**A stage function must be defined at top level, before the dispatch loop.**
+The dispatch loop passes the function NAME to `run_stage`, so bash resolves it
+at call time; a definition inside another function's body is never a
+definition.  Inserting the block after gate.sh:1286 landed it inside
+`stage_shared_tmp()`, and the gate said:
+
+    tools/gate.sh: line 195: stage_scope_claims: command not found
+
+**A one-line definition is not a definition.**  `derived_edges()` finds stage
+functions with the awk pattern `/^stage_[a-z_]+\(\) *\{/`, which requires the
+`{` to end the line, and clears its state on `/^\}/`.  A one-line
+`stage_x() { python3 ...; }` matches neither, so the derived-edge parser keeps
+the previous function's name and attributes the following lines' paths to it.
+The safe insertion point is after HEAD gate.sh:1353 (the `}` that closes
+`stage_word_refs`), which is below 1286 and above the dispatch loop at ~1384.
+
+**A registered stage must be reached by a rule of its own.**  `--required-for`
+refuses a stage that only the `all` rules reach, because `all` fires only for
+`tools/gate.sh` and `CMakeLists.txt`:
+
+    gate: --required-for: stage 'recon' is registered, but only the 'all' rules
+    reach it.
+
+The new stage needed its own row, `"tools/check_scope_claims.py|scope-claims"`,
+in the same `REQUIRED_SCOPES` block as the other tools.
+
+### 6. What the round changed
+
+- `tools/check_scope_claims.py` (new, 319 lines): reads the scope table's
+  comments, reads the gate's answer for each row that carries a countable
+  claim, and refuses a row that disagrees.  `--self-test` carries five
+  controls, including the two forms of the file's own prescribed wording.
+- `tools/gate.sh`: the `scope-claims` stage registered; the `.github/*` comment
+  rewritten to say what the row does; `EXP_CTEST` 229 -> 231.
+- `CMakeLists.txt`: `scope_claims_regression` and `scope_claims_selfcheck`.
+- Seven stage-count declarations corrected 32 -> 33 (`docs/README.md`,
+  `tools/README.md` x2, `docs/BOARD.md`, `tools/ref_substitute_guard.py`,
+  `docs/AUDIT.md`, `docs/PLAN_V06.md`); `recon.ctest-count` 229 -> 231.
+
+The gate now runs **33 stages / 231 CTests**, all green.
+
+### 7. What this round does not settle
+
+The `picked up` grade is a coincidence, and this round worked around it rather
+than fixing it: the constraint "insert below gate.sh:1286" is a workaround for
+a checker that lets an unrelated file's line number carry a citation.  A checker
+that graded a hold as held only when the cited file's own line carries the
+span -- or that reported `picked up` holds in a way a reader can audit --
+would not have this constraint at all.  That is a separate round, and it is
+worth one: it is the reason a nine-line comment insertion can turn a green
+gate red.
