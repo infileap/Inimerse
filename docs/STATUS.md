@@ -19166,3 +19166,194 @@ on this tree so far has failed in the same way -- but shorter citing lines.
 lines out of 18,960 in the documents, carrying 162 of the 197.  A citation
 that names one file cannot be ambiguous; a citation that names forty can
 be ambiguous in dozens of ways at once.
+
+## §10.276 — the quote that was inside another word
+
+### 1. Where the next thing was
+
+§10.275 closed with this:
+
+> **The next step is not a better rule** -- every rule tried on this tree so
+> far has failed in the same way -- **but shorter citing lines.**
+
+That is true of the OWNER rule, and this round is not about the owner rule.
+It is about the rule underneath it, which nobody had looked at for a long
+time, and which the last round's own measurement had already brushed
+against without noticing: the report said a reference is "held" when a
+quoted string appears on the cited line -- and the test for "appears" was a
+bare substring match.
+
+### 2. The rule, as it was written
+
+The evidence for "this number exists" is a quoted string that appears on the
+cited line itself.  The rule was a substring test:
+
+```python
+    for s in spans:
+        if s in target_lines[number - 1]:
+            return (s, number)
+    return None
+```
+
+Which is a rule about **characters**, not about **words**.  `target` is
+inside `off_target`.  `str` is inside `strlen`.  `and` is inside `candy`.
+`int` is inside `print`.  A span of two letters is inside almost any line
+of source code.
+
+The rule's own docstring said "a quoted string that appears on the cited
+line itself".  The code said "a quoted string whose characters appear
+somewhere on the cited line".  A reader checking a hold in the report would
+look for the quote and not find it.
+
+### 3. What it was worth
+
+Measured on `5898f21b`, over the 629 held references:
+
+```
+held                                    629
+held only by a word fragment             50
+```
+
+Fifty references -- 8% of everything the checker certifies as held -- were
+held by nothing but the letters of a quote inside a longer word.  The
+fragments that did it:
+
+```
+str        4      len        4      FAIL_      4
+eof        3      fprintf    2      peer        2
+main       2      ast_       2      and         2
+int        2      FLOAT      2      gate        2
+runtime    1      inim_load_text 1  GBK         1
+pos        1      push       1      with        1
+compiler   1      nil        1
+```
+
+### 4. How the checker found out about its own rule
+
+This is the part worth having.  The rule was found by the checker changing
+its own measurement, and not by anybody reading it.
+
+Adding a line of code to `tools/check_line_refs.py` -- one line, containing
+the word `off_target` -- moved the checker by eleven lines, and therefore
+changed what line 1569 says.  `docs/BOARD.md` line 64 cites line 1569.
+The quote on that citing line includes `target`.  The old rule matched
+`target` inside `off_target`, so the reference to line 1569 acquired a
+second holder, and the ambiguity count moved from 197 to 198.
+
+The checker had changed its measurement by being edited.  A tool that
+cannot be edited without moving its own readings is a tool whose readings
+are a property of its source rather than of the repository.
+
+### 5. Two things had to be true at once
+
+**The rule had to get stricter.**  The span must be a word in the cited
+line, both ends of it: `and` is a word inside `candy`, and only checking
+one end is not enough.
+
+**And the checker's own line numbers had to stop moving.**  `docs/` cites
+`tools/check_line_refs.py` by line number -- `docs/AUDIT.md` line 6543
+cites lines 12, 16 and 296, and `docs/BOARD.md` line 64 cites line 1569 --
+so inserting a line anywhere above those numbers moves the text those
+citations point at, and a citation that has been moved is a citation that
+now says something else.
+
+So the new code goes at the END of the file, and the functions above call
+down into it.  `hold_matched` keeps its place, keeps its shape, and calls
+`span_appears`, which lives below every line `docs/` cites.
+
+The word class is Unicode-aware.  On this tree the ASCII and Unicode rules
+agree exactly -- every span here is ASCII -- so the choice is made for the
+trees that are not this one.
+
+### 6. What it cost, measured
+
+```
+                     held    unanchored    coincidental   ambiguous
+before                629           552           236        197
+after                 609           572           228        168
+```
+
+Twenty references stopped being held.  They are not missing; they are
+reported as unanchored, which is what they always were.
+
+**And every pin still holds.**
+
+```
+explicit delta    +12  (expect +12)
+unanchored delta   -5  (ceiling +0)
+coincidental delta  +0  (ceiling +0)
+ambiguous delta     +0  (ceiling +0)
+```
+
+The unanchored delta went from -3 to -5, which is further from the ceiling
+in the good direction.  The coincidence and ambiguity deltas did not
+move at all, because both of them are measured against a base of their
+own (`fca60a25`) and the rule change moved the base reading and the
+current reading by the same amount.
+
+**No pin was reset.**  That is the interesting part: the stricter rule is
+not "stricter and therefore red".  It separated two different things --
+references that were held because the cited line really does carry the
+quote, and references that were held because the cited line carries a word
+that starts with the same letters.  The second kind was never evidence.
+
+### 7. The control, in both directions
+
+`tools/check_line_refs.test.py` gains a cell, and it asserts both
+directions because a rule that only refuses is a rule that refuses
+everything:
+
+- a fixture whose cited line says `off_target` must NOT hold the
+  reference, and
+- the same fixture with `target` in it must still hold it.
+
+and the rule itself is checked directly, on five pairs: `target` in
+`off_target` (no), `target` in "the target of the run" (yes), `and` in
+`candy` (no), `str` in `strlen(x)` (no), and a path in a sentence (yes).
+
+**The negative control:** with the old checker, the test file exits 1 and
+says
+
+```
+FAIL word/fragment -- the reference was held by 'target' inside a longer
+word; a span is a word in the cited line, not a fragment of one
+```
+
+**A second thing the round found.**  `tools/holds.test.py` mutates the
+hold rule by replacing its SOURCE TEXT, and its three rule shapes had to
+be rewritten for the new call.  That is a real coupling -- the negative
+control binds to the shape of the source, not to the identity of the rule
+-- and it showed up as a red: "could not find the hold rule to mutate".
+A control that cannot find what it controls is a control that has stopped
+testing anything, so the shapes were updated to the new call and the
+control was re-measured: with the old checker it still goes red, and with
+the new one it is green.
+
+### 8. What the round changed
+
+- `tools/check_line_refs.py`: `hold_matched` asks `span_appears` instead of
+  asking `in`; `span_appears` and the word class are at the end of the
+  file, below every line `docs/` cites.
+- `tools/check_line_refs.test.py`: the word-boundary cell, in both
+  directions, plus the rule checked directly.
+- `tools/holds.test.py`: the three rule shapes, and the dead
+  `guess_attribution` removed (it was defined and never called).
+
+### 9. What this round does not settle
+
+**The word rule is still a lexical rule.**  It says the quoted text is
+there as a word.  It does not say the quoted text is there FOR THIS
+NUMBER -- that is what the owner rule is for, and §10.275 measured how
+often the owner rule and the content disagree: 176 times.
+
+**And the fragments that were removed were not all mistakes.**  `str` in
+`strlen` is a coincidence; but the rule also removed every hold that
+rested on a span which is a prefix of a longer identifier, and a span like
+`eof` inside `eof_marker` may have been a deliberate quotation.  The
+rule cannot tell the difference, and it now says so by not holding those
+references at all.
+
+**The remaining 559 held references are still held by content, not by
+proof.**  The rule says the cited line carries the quote.  It does not say
+the cited line is the line the author meant, and that is the next
+question.
