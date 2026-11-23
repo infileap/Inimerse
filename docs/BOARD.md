@@ -46,7 +46,7 @@ tools/stream.sh rm <slug>           # 有未提交改动会拒绝；确认丢弃
 
 ## 3. 门禁（`tools/gate.sh`）
 
-合入 main 前必须全绿。三十二个阶段，任一失败即整体失败（「二十五个」是 `STAGE_SPECS` 的条目数，`tools/check_stage_count.py` 每次门禁读回；下表只列十五行，是给读者看的常用子集，**不是全部**：`obs-markers` 与 §10.241/§10.242 新增的 `python-asserts`、`stage-count` 都不在表里 —— 表的行数从来不是阶段数；**那一行今天故意没有补**：补它会把本文件插入点以下的每一行往下推一格，而这个文件的行号被全仓引用，补行必须与改引用同批做 —— 见 AUDIT.md §1.97 增补一百一十五）：合入前后要量哪几样、每样能被什么证伪，见 §14 的六条清单；本节只讲阶段口径，不重复那边的读数。
+合入 main 前必须全绿。三十三个阶段，任一失败即整体失败（「二十五个」是 `STAGE_SPECS` 的条目数，`tools/check_stage_count.py` 每次门禁读回；下表只列十五行，是给读者看的常用子集，**不是全部**：`obs-markers` 与 §10.241/§10.242 新增的 `python-asserts`、`stage-count` 都不在表里 —— 表的行数从来不是阶段数；**那一行今天故意没有补**：补它会把本文件插入点以下的每一行往下推一格，而这个文件的行号被全仓引用，补行必须与改引用同批做 —— 见 AUDIT.md §1.97 增补一百一十五）：合入前后要量哪几样、每样能被什么证伪，见 §14 的六条清单；本节只讲阶段口径，不重复那边的读数。
 
 | 阶段 | 命令 | 期望 |
 | --- | --- | --- |
@@ -467,7 +467,7 @@ INIMERSE_KNOWN_SKIPS=/tmp/list-one.txt tools/ctest_skip_guard.sh --check-junit /
     recon.explicit-delta=12
     recon.citations-cases=8
     recon.word-refs-baseline=87
-    recon.ctest-count=229
+    recon.ctest-count=231
 
 | 7 | 读回收据 | `rc=0`、`RECON\|tokens=5\|tokens-read-back=5\|tokens-unknown=0\|tokens-resolver-failed=0\|tokens-tree-disagrees=0\|closed=yes`（`tokens` 等于四项之和；不闭环就自己报 PROBLEM；「没这个 key」「有 key 但解算器不在/抛了」「树自己三个数打架」是三件不同的事，第四条是后加的）、每个 token 的值都是从树上读回来的 | **把任意一个 token 的值改错 ⇒ 第 7 行必红**；把 key 拼错 ⇒ 红且说「这个 key 没有解算器」（key 集封闭）；同一个 key 两个值 ⇒ 红。**这是本节的元判据**：它决定前六行是「有牙的清单」还是「只读文档」—— 2026-11-04 实测过没有它时的状态：把 `ctest-count` 那格改成「今天都是 192」，七个 docs 检查器全部 `rc=0`，没有一个吭声 |
 

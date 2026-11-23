@@ -52,7 +52,7 @@ node tools/node_suites/run_all.js    # 期望：node protocol suites: 13/13 pass
 
 ```bash
 tools/stream.sh new <slug>     # 建 .worktrees/<slug> 与分支 stream/<slug>
-tools/gate.sh                  # 三十二个阶段：build + ctest + fuzz + economy + node + plugin + oauth-loop + ignored-credentials + links + doc-paths + text-integrity + orphan-fixtures + orphan-targets + line-refs + release-tags + obs-markers
+tools/gate.sh                  # 三十三个阶段：build + ctest + fuzz + economy + node + plugin + oauth-loop + ignored-credentials + links + doc-paths + text-integrity + orphan-fixtures + orphan-targets + line-refs + release-tags + obs-markers
 ```
 
 每个会话开工前先读自己那条流的**作业单**：`docs/streams/<slug>.md`（已结项的作业单在文件头

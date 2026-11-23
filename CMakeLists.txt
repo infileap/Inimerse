@@ -2279,3 +2279,14 @@ set_tests_properties(doc_examples_regression PROPERTIES WORKING_DIRECTORY ${CMAK
 add_test(NAME doc_examples_selfcheck
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_doc_examples.py --self-test)
 set_tests_properties(doc_examples_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")
+
+# §10.270: each REQUIRED_SCOPES row carries a comment saying what it does, and one
+# said `no stage` while `--required-for` answered 1 -- the .github files end .yml,
+# which text-integrity covers. The comment is what a reader uses to decide whether
+# a change is covered, and nothing was reading it.
+add_test(NAME scope_claims_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_scope_claims.py)
+set_tests_properties(scope_claims_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "docs;regression")
+add_test(NAME scope_claims_selfcheck
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_scope_claims.py --self-test)
+set_tests_properties(scope_claims_selfcheck PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")

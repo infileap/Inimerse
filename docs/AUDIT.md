@@ -6148,7 +6148,7 @@ say d              # {<function>: fn}   ← 存进去了
 ★★★★ `noble-zephyr` 的「覆盖集合」第二轮：它把十一对「两份覆盖集合」逐对查出**比较这两个集合的东西**，而 #2/#3 的答案不是「漏做」，是**逐字登记**。★ `tools/gate.sh` 的 `REQUIRED_SCOPES` 最后一行逐字：
 
 ```
-  # .github/* -- no reader and no stage: CI is CI's own business.
+  # .github/* -- no READER; the `-` says this row forces no stage (the .yml files are still covered by text-integrity's glob fallback).
   ".github/*|-"
 ```
 
@@ -7601,7 +7601,7 @@ $ timeout 8 ./build/inimerse --no-mods /tmp/shc/main.im /tmp/nosemi.im   # 去�
 **C. 「不改变任何裁决」是一个空集，而下界是 1。**
 
 - ★ **每一个受跟踪的文本文件至少强制 `text-integrity`**（实测一个 bench kernel = **1**）。
-- ★ **非文本、且不在任何 scope 里的文件强制全部 32 个**（实测一个 PNG ⇒ stderr 逐字 `no rule matches …; requiring every stage.`）。
+- ★ **非文本、且不在任何 scope 里的文件强制全部 33 个**（实测一个 PNG ⇒ stderr 逐字 `no rule matches …; requiring every stage.`）。
 
 ⇒ ★★ **判据：一个「不改变任何裁决」的清单是【空集】，而下界是 1 —— 而报告里只有数，没有地板。** ★ **报告的读者会把「某个文件只有 1」读成「它不重要」，而真相是「1 是地板，不是它的性质」。**
 
