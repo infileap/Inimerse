@@ -18304,3 +18304,188 @@ span -- or that reported `picked up` holds in a way a reader can audit --
 would not have this constraint at all.  That is a separate round, and it is
 worth one: it is the reason a nine-line comment insertion can turn a green
 gate red.
+
+## §10.271 — the report named one holder and graded it with another
+
+### 1. Where the next thing was
+
+§10.270 ended by naming what it had worked around rather than fixed: the
+`picked up` grade, and with it the rule "insert below gate.sh:1286" -- a
+constraint that exists because an unrelated file's line NUMBER can carry a
+citation.
+
+That is the *consequence*.  The *cause* is one line of the checker, and this
+round went after the cause.
+
+### 2. The three fields a reader takes as one
+
+`tools/check_line_refs.py` reports, for every held reference, three things
+side by side:
+
+    grade    own / borrowed / picked up
+    holder   the file the evidence came from
+    span     the quoted text that did the holding
+
+A reader reads those as one piece of evidence: "the grade is `own`, so the
+owner's own name is what held it, in the holder that is named".  **The report
+did not guarantee that.**  The grade was computed over the spans of **every**
+holder the reference had, and the report named the **first** holder.  Those two
+can disagree, and when they do the three fields are three separate things
+wearing one name.
+
+Measured on `9048cbb9`: **27 of 622 held references reported a grade their own
+named holder did not support.**  Every one of the 27 had a holder that did
+support it -- the evidence was there, and the report was pointing at a
+different piece of it.
+
+The sharpest of the 27:
+
+    docs/DECFY_DESIGN.md (line 1072)  cites  CMakeLists.txt line 1359
+    reported grade   own
+    reported holder  CMakeLists.txt, span `FAIL_`
+
+`FAIL_` does not contain the owner's name, so that holder cannot support
+`own`.  The grade was `own` because a *different* holder -- one the report
+never named -- carried the string `CMakeLists.txt`.
+
+### 3. What the 27 look like
+
+They are not one bug repeated 27 times; they are 27 references where the
+reference has more than one holder and the first one is the weaker.  Measured
+on the same tree, the reference set is 622 held, of which:
+
+    grade            count
+    own                 56
+    borrowed            65
+    picked up          501
+
+and 196 of the references have a holder that is **ambiguous across files** --
+more than one file the line names has a line N carrying a holding span.
+
+Two of the 27, because they show the two ways it goes wrong:
+
+    docs/BOARD.md (line 64)   cites CMakeLists.txt line 426
+      the cited line is `  if(WIN32)` -- no quoted span on it at all
+      reported grade   borrowed
+      reported holder  docs/DECFY_DESIGN.md, span `**（`
+
+    docs/STATUS.md (line 51)  cites tools/gate.sh line 368
+      reported grade   borrowed
+      reported holder  CMakeLists.txt, span `INIMERSE_CLANG`
+
+The first one is worse than it looks, and it is where this round stopped
+short of a fix.  The span `**（` is a string **no human wrote**: `SPAN` is
+`re.compile(r"`([^`\n]+)`")` -- a naive backtick pairing -- and the citing line
+has an **odd** number of backticks, so the pairing goes off by one and the
+"span" is spliced out of the middle of the prose.  Measured over the tree:
+**1631 doc lines have an odd number of backticks**, and 897 distinct extracted
+spans are `**`-and-CJK prose fragments.  The forged `**（` then happened to
+occur on line 426 of several documents at once, and the checker read that as
+proof.
+
+**That part is still there.**  This round made the report stop lying about
+which holder it is talking about; it did not make the checker stop accepting
+a forged span.  Those are two different defects, and only the first is
+settled below.
+
+### 4. The fix, and the rule it encodes
+
+The rule is one sentence: **the holder the report names must be a holder that
+supports the grade the report prints.**
+
+In the checker, the grade is now computed by a local `_grade(spans)` that
+answers the question from a given set of spans, and the holder is then chosen
+to match:
+
+    grade        = _grade(spans of every holder)      # unchanged answer
+    supporting   = [h for h in hits if _grade([h[1]]) == grade]
+    holder_pair  = supporting[0] if supporting else hits[0]
+                  # and when nothing supports it, the grade follows the
+                  # holder that IS reported
+
+The last clause matters.  When no single holder supports the grade, the
+report has to say something, and saying a grade its named holder cannot
+support is the worse of the two: a report that cannot name its evidence is
+worse than one that names weaker evidence.  Measured on `9048cbb9`: **all 27
+had a supporting holder**, so that clause never fired on this tree -- but it
+is the clause that keeps the report self-consistent on a tree where it does.
+
+**Nothing else moved.**  The held count is 622 before and after; the grade
+distribution is 56 / 65 / 501 before and after; the pins are unchanged
+(`explicit delta +12`, `unanchored delta -3` against a ceiling of `+0`).  A
+fix that changes the numbers would have had to re-pin them, and a fix that
+changes nothing but the self-consistency is a fix that needed no new budget.
+
+### 5. The test, and the two lessons it cost
+
+`tools/check_line_refs.test.py` is new, and it is a separate file because
+what it holds is a **self-consistency** property -- and a property that has
+only ever been observed holding is a property nobody has checked.
+
+The fixture is synthetic and reads no checkout: a `FakeTree` with four files
+is monkeypatched over the checker's `TREE`, so the test cannot pass by
+inheriting a real tree's accidents.  The situation, in miniature:
+
+  * the citing line names three files, and the LAST one owns the number --
+    that is the checker's own position rule;
+  * the owner's line N carries no quoted text, so the owner cannot hold it;
+  * an unrelated file's line N carries the noise file's own path -- that
+    holder supports `picked up`, and it is the FIRST of them;
+  * a second file's line N carries a TARGET name, and that is what makes the
+    grade `borrowed`.
+
+So the old report graded the reference `borrowed` while naming the holder
+that supports `picked up` -- the contradiction, in miniature.  The second
+cell reverses the order of the two holders on the line and asks the same
+question, because **a report that only agrees with itself when the files
+happen to be named in a given order is not a report.**
+
+Two lessons, both paid for:
+
+**A test that has never failed has never been tested.**  The first version of
+the fixture passed against the *old* checker.  It passed because the noise
+file had eight lines and the span sat on the eighth, while the reference
+named the seventh: the holder did not exist, so there was no contradiction to
+find.  The negative control -- run the test against the pre-fix checker and
+watch it fail -- is what exposed it, and it is now part of the fixture's
+design rather than a thing to remember.
+
+**`cmd | tail` swallows the exit code.**  The negative control printed its
+FAIL lines and exited 0, because the pipe's status was the pipe's.  The
+numbers that matter are measured with the status read directly:
+
+    old checker:  exit 1   (reports the contradiction)
+    new checker:  exit 0
+
+### 6. What the round changed
+
+- `tools/check_line_refs.py`: the grade and the named holder are now one
+  piece of evidence.
+- `tools/check_line_refs.test.py` (new): the report has to agree with
+  itself, in both orders of the holders, on a synthetic tree.
+- `CMakeLists.txt`: `line_refs_report_regression`.
+- `tools/gate.sh`: `EXP_CTEST` 231 -> 232.
+- `docs/BOARD.md`: `recon.ctest-count` 231 -> 232.
+
+The gate now runs **33 stages / 232 CTests**, all green.
+
+### 7. What this round does not settle
+
+**The forged spans are still accepted.**  1631 doc lines have an odd number
+of backticks, and the naive pairing manufactures strings like `**（` out of
+the prose; a forged string that occurs on line N of some other file is still
+accepted as a hold.  This round made the report honest about *which* holder it
+is talking about, not about *whether that holder is worth believing*.  The
+next step is a span that cannot be spliced: pairing backticks against a
+fence-aware rule, and refusing a span that no pair of backticks in the line
+actually encloses.  That is a separate round.
+
+**The `own` grade is unreachable for a C source.**  The span mechanism reads
+**backtick-quoted** text, and a line of C has no backticks: of the 622 held
+references, 609 have an owner whose own line N carries no usable span at
+all, and 155 of the owners are `.c` files.  So "the owner's own line holds
+its own name" is a rule about `CMakeLists.txt` and `tools/gate.sh` (38 and 9
+of the 56 `own` grades), and for everything else the hold is a coincidence of
+line numbers.  Fixing that means reading the cited file's own line for the
+symbol, not for a quoted span -- a different measurement, with a different
+denominator, and therefore a different pin.
