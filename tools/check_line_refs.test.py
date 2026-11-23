@@ -192,6 +192,61 @@ def check_cell(rows, doc_text, label):
     return failures
 
 
+def check_span_rule() -> int:
+    """The code spans on a line, read the way Markdown reads them.
+
+    Three cells, and each one is a shape the naive pairing gets wrong:
+
+      1  a DOUBLE-backtick span is ONE span.  The naive pattern pairs the
+         backticks left to right, so it reads `` `:421` `` as two empty
+         spans -- and everything after it on the line is paired one
+         position off.
+      2  a run with no matching closer is literal text, and so is the
+         rest of the line.
+      3  a line that has such a run still has its OTHER spans: the naive
+         pairing destroys them, and the measurement that matters is that
+         the real ones come back.
+    """
+    failures = 0
+
+    # cell 1: one double-backtick span, not two empty ones
+    line = "the span is `` `:421` `` and the rule is `` `:NNN` ``"
+    spans = C.SPAN.findall(line)
+    want = ["`:421`", "`:NNN`"]
+    if [s.strip() for s in spans] != want:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL span/double -- expected {want!r}, "
+              f"got {[s.strip() for s in spans]!r}")
+
+    # cell 2: an unclosed run makes the rest of the line literal
+    line = "an unclosed ` run and then `docs/BOARD.md` is named"
+    spans = [s.strip() for s in C.SPAN.findall(line)]
+    if "docs/BOARD.md" in spans:
+        failures += 1
+        print("check_line_refs.test.py: FAIL span/unclosed -- the span after "
+              "an unclosed backtick run was extracted: "
+              f"{spans!r}")
+
+    # cell 3: the real spans on a line with a double-backtick run survive
+    line = (
+        "The double span `` `:421` `` sits here, and `docs/BOARD.md:145` is "
+        "named, and `git grep` is quoted."
+    )
+    got = set(C.anchors(line))
+    for want_span in ("docs/BOARD.md:145", "git grep"):
+        if want_span not in got:
+            failures += 1
+            print(f"check_line_refs.test.py: FAIL span/rescue -- the span "
+                  f"{want_span!r} was lost; anchors are {sorted(got)!r}")
+    # and the prose between the backticks is NOT a span
+    for forged in ("span", "the double span", "is named, and"):
+        if forged in got:
+            failures += 1
+            print(f"check_line_refs.test.py: FAIL span/rescue -- the prose "
+                  f"{forged!r} was read as a span")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -231,11 +286,14 @@ def main() -> int:
             print(f"check_line_refs.test.py: FAIL {label} -- the report named "
                   f"the holder {NOISE!r}, whose span holds nothing")
 
+    failures += check_span_rule()
+
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
         return 1
     print("check_line_refs.test.py: OK -- every reported holder supports its "
-          "reported grade, in both orders")
+          "reported grade, in both orders, and the code spans are read the "
+          "way Markdown reads them")
     return 0
 
 

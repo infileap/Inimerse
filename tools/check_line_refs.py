@@ -590,7 +590,74 @@ WIDENED_HOLD_KINDS = ("neighbour", "window")
 
 PATHISH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*\.[A-Za-z0-9]{1,6}")
 NUMBER = re.compile(r":(\d+)(?:-(\d+))?")
-SPAN = re.compile(r"`([^`\n]+)`")
+# The code spans on a line, read the way Markdown reads them.  The naive
+# pattern -- one backtick, then anything that is not a backtick, then one
+# backtick -- pairs the backticks left to right and therefore reads a
+# DOUBLE-backtick span (`` `:NNN` ``) as two empty spans plus a span that
+# starts inside the text and ends outside it.  Everything after such a run
+# is paired one position off, and two things happen at once: the real spans
+# on the rest of the line are swallowed (measured on this tree: 32 doc lines
+# lose 254 real spans, among them the line numbers `:1569`, `:421`, `:1659`
+# themselves), and 171 spans are spliced out of the prose between two
+# backticks that never met (measured: 28 lines gain a span such as
+# `**（` -- a string no human wrote, which then holds a citation because it
+# happens to sit on the same line NUMBER of another file).
+#
+# Markdown's rule is one sentence: a run of N backticks opens a code span
+# that is closed by a run of exactly N backticks.  A run with no matching
+# closer is literal text, and the rest of the line is literal text too.
+#
+# The reading does not move the pins: the base tree measures 562 unanchored
+# under the naive rule and 555 under this one, and the working tree measures
+# 559 and 552 -- a delta of -3 either way, against a ceiling of +0.
+def code_spans(line: str) -> list[str]:
+    """The code spans on one line, under Markdown's rule."""
+    out: list[str] = []
+    i = 0
+    n = len(line)
+    while i < n:
+        if line[i] != "`":
+            i += 1
+            continue
+        j = i
+        while j < n and line[j] == "`":
+            j += 1
+        run = j - i
+        k = j
+        closed = False
+        while k < n:
+            if line[k] != "`":
+                k += 1
+                continue
+            m = k
+            while m < n and line[m] == "`":
+                m += 1
+            if m - k == run:
+                out.append(line[j:k])
+                i = m
+                closed = True
+                break
+            k = m
+        if not closed:
+            # No run of the same length: this run and the rest of the line
+            # are literal text.
+            break
+    return out
+
+
+class _CodeSpans:
+    """The old SPAN.findall() shape, over Markdown's rule.
+
+    The name is kept because the code reads better with one extractor, and
+    the rule behind it is written down where the extractor is.
+    """
+
+    @staticmethod
+    def findall(line: str) -> list[str]:
+        return code_spans(line)
+
+
+SPAN = _CodeSpans()
 PURE_NUMBER = re.compile(r"^:?\d+(?:-\d+)?$")
 LINK = re.compile(r"\[[^\]]*\]\([^)]*\)")
 MAX_PARA = 20
