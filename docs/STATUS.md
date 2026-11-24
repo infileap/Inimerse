@@ -19357,3 +19357,215 @@ references at all.
 proof.**  The rule says the cited line carries the quote.  It does not say
 the cited line is the line the author meant, and that is the next
 question.
+
+## §10.277 — the link that named a file the owner rule could not see
+
+### 1. Where this round starts
+
+§10.276 left one thing measured and unexplained.  It had removed the
+holds that rested on a fragment of a word, and it had said the rest of
+the question was the owner rule: the rule that decides WHICH file a
+number belongs to.  It also left behind a note from the survey that
+produced it: the `out_of_range` bucket held eighteen references, and
+not one of them was a reference to a line that does not exist.
+
+Eighteen references the checker calls "out of range" -- a number whose
+cited file has no such line -- and every one of them has a file the
+citing line also names whose line N exists.  So the number was not
+dangling.  The checker had picked the wrong file to ask.
+
+### 2. What the owner rule reads
+
+The rule is a position rule, and the file says so twice: "the last
+tracked name ENDING at or before the number".  A citing line usually
+names several files -- a table row names a source file, a script and a
+document -- and the rule takes the last of them that ends before the
+number.
+
+That rule reads the line through `file_mentions`, which collects the
+REPOSITORY paths on the line.  And a Markdown link target is not
+necessarily a repository path.  `docs/BOARD.md` writes
+
+    [AUDIT.md](AUDIT.md)
+
+which names `docs/AUDIT.md`, because a Markdown link target is resolved
+against the directory of the document that carries it.  The mention scan
+read `AUDIT.md`, did not find it among the tracked paths, and dropped
+it.  So the file the citation was actually about was never a candidate
+for owner at all, and the rule chose some other file the line happened
+to name.
+
+This is not a heuristic that could be argued about.  The syntax says
+what a relative link means.
+
+### 3. How big it was
+
+Measured on 8aafbf4b:
+
+  * 555 Markdown link targets in docs/, of which 541 resolve to a
+    tracked file -- 88 distinct files;
+  * 127 citing lines name a relative target that the mention scan did
+    not know about -- 73 distinct (document, line) pairs, of which
+    docs/AUDIT.md holds 52, docs/STATUS.md holds 50, and
+    docs/streams/builtin-platform-census.md holds 4;
+  * 183 citations change owner once the relative targets are resolved.
+
+The eighteen `out_of_range` references are the visible end of it.  For
+example, docs/BOARD.md line 64 cites `:241`, and the rule chose
+docs/streams/builtin-platform-census.md -- a document of 160 lines --
+as the owner, so the reference was reported as pointing past the end of
+the file.  The file the link actually names has 241 lines.
+
+### 4. What the fix is
+
+`link_mentions` resolves a link target against the citing document's
+own directory, the way Markdown resolves it, and hands the result to
+the mention scan as a mention like any other.
+
+Two details are load-bearing.
+
+**The mentions have to be sorted.**  The owner rule takes the LAST
+mention that ends at or before the number, so the ORDER of the list is
+the rule.  Appending the link targets at the end of the list would put
+a link at column 40 behind a name at column 219, and every number after
+the link would belong to the link.  Measured: without the sort, the
+four numbers on docs/STATUS.md line 42 all took docs/RELEASE_0.5.2.md
+as their owner and the mis-labelled count rose from 0 to 11.  With the
+sort it is back to 0.
+
+**A link to a file nobody tracks names nothing.**  The resolution is
+only a mention if it lands on a tracked file, so a link to a document
+that was deleted does not take a number away from the file the line
+names in plain text.
+
+### 5. What it costs
+
+Nothing in the pins had to be moved:
+
+    explicit delta   +12 (expect +12)
+    unanchored delta  -5 (ceiling +0)
+    coincidental delta +0 (ceiling +0, 234 of 618 held)
+    ambiguous delta   +0 (ceiling +0, 172 held by two or more)
+
+The counts moved the way a fix does: 185 explicit references unchanged,
+unanchored down from 572 to 563, held up from 609 to 618.  Nine more
+references found the file they were about.
+
+### 6. The pin that objected, and what it was actually counting
+
+The one red was `citations-shrunk`: 1199 citations before, 1199 after,
+and the count said four were removed and four added.
+
+Four of them were in docs/BOARD.md, and every one of them had changed
+owner:
+
+    docs/BOARD.md|34   docs/REQUIREMENTS_ANALYSIS.md  ->  docs/streams/upp-in-engine.md
+    docs/BOARD.md|43   <none>                         ->  docs/streams/aot-backend.md
+    docs/BOARD.md|52   <none>                         ->  docs/streams/aot-backend.md
+
+Three of the four had had NO owner at all before.  The fix gave them
+one.  And the count called that a removal.
+
+The reason is in the name the count used.  A citation was identified as
+`document|number|owner` -- the owner included.  So a change of owner
+produced a different identity, and the count, which subtracts the two
+sets of identities, saw an identity leave.  But the count's own
+declared subject is the citations themselves: "A count of the
+citations themselves, and the one thing it forbids is a DECREASE".  It
+forbids a decrease in COVERAGE -- in addresses cited.  Whether the
+position rule now attributes a number to a different file is a
+different fact, and the count was reading it as the same fact.
+
+Measured: by address -- the document and the number, without the owner
+-- the pinned tree and this tree cite exactly the same 1199 addresses.
+Removed addresses: 0.  Not one citation went anywhere.
+
+So the fix gives the count two names instead of one:
+
+  * the ADDRESS of a citation is the document and the number.  That is
+    what the count compares, and what it forbids to shrink.
+  * the IDENTITY of a citation is the address plus the owner the
+    position rule attributes it to.  That is what a receipt names,
+    because a receipt talks about one citation and not about a
+    document.
+
+The pin file is unchanged and the receipt mechanism is unchanged.  The
+comparison changed, and the report gained a line it did not have: an
+address whose owner changed is now NAMED, as
+
+    CITATIONS|moved|docs/API.md|151|CMakeLists.txt|tools/gate.sh
+
+It is not a removal and it is not a failure.  It is a fact about the
+tree that a reader of the report should not have to guess.
+
+### 7. The controls
+
+**The behaviour control.**  In a throwaway copy, one citation was
+re-pointed from one file to another -- the reference to CMakeLists.txt
+line 151 became a reference to tools/gate.sh line 151, both of them in
+docs/API.md.  The address did not move.
+
+  * before the fix: `removed=1`, `CITATIONS|removed|docs/API.md|151|CMakeLists.txt`,
+    and the run failed on `citations-shrunk`;
+  * after the fix: `removed=0`, and the report names the change --
+    `CITATIONS|moved|docs/API.md|151|CMakeLists.txt|tools/gate.sh`.
+
+**The removal control.**  The existing citation control deletes a
+citation outright -- the text of the reference to CMakeLists.txt line
+151 is replaced by prose -- and that must still be a removal, because
+the address is gone with it.  Measured after the fix: `removed=1`, and
+the identity named is the pinned tree's own identity, the one that
+names docs/API.md, the number 151 and CMakeLists.txt.  All eight cases
+of the citation control are green.
+
+**The unit cells.**  Two new cells in the line-reference control:
+
+  * a document-relative link is resolved to a tracked file, and the
+    owner of the number follows from that -- the link is the last name
+    on the line, so the number belongs to the linked file.  With the
+    link invisible to the mention scan, the owner would be the file
+    named earlier in plain text, whose line N carries no quoted text,
+    and the citation would be held by nobody.  A link to a file that is
+    not tracked names nothing.
+  * a citation has an address and an identity and they are not the
+    same: one address, two identities, when two owners are possible.
+
+**The negative control.**  With the checker of 8aafbf4b and the new
+cells, the control fails as it must -- "the checker has no rule for a
+document-relative link target" and "the checker has no notion of the
+address of a citation".
+
+### 8. What changed
+
+  * `tools/check_line_refs.py`: `link_mentions` resolves a relative
+    link target against the citing document's directory; the mention
+    scan merges the resolved names and sorts them, because the order
+    of the mentions is the owner rule; `citation_address` is the
+    address of a citation, and the citation count compares addresses
+    while the receipt and the removal report keep naming identities;
+    a citation whose owner changed is reported on a line of its own.
+  * `tools/check_line_refs.test.py`: two new cells, the relative link
+    and the address.
+
+No pin was moved and no pin file was rewritten.
+
+### 9. What this round does not settle
+
+**The owner rule still disagrees with the content on 176 references.**
+The relative links were a blind spot with a syntax, and it is closed;
+what remains is a rule that picks the last name before the number, and
+§10.275 measured that this rule and the content evidence disagree
+176 times.  Two of the three things measured so far -- coincidence and
+ambiguity -- count that disagreement without taking sides on it.
+
+**The moved line is a report, not a pin.**  Sixty-four citations have
+changed owner since the citation pin was taken, and eight of them had
+had no owner at all.  Nothing fails when that happens.  A count of
+owner changes would be a third pin on the same ground, and the
+ambiguity count already measures the part of it that the content can
+dispute.
+
+**The link resolution is for Markdown links only.**  A reference in
+prose -- "see the AUDIT file" -- names no file that a checker can
+resolve, and it names no mention, and the position rule cannot see it.
+That is the remaining shape of the same blind spot.
