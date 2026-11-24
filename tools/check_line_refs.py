@@ -379,7 +379,7 @@ import re
 import subprocess
 import sys
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -890,6 +890,22 @@ def citation_id(rel: str, number: int, owner: "str | None") -> str:
     return f"{rel}|{number}|{owner or '<none>'}"
 
 
+def citation_address(rel: str, number: int) -> str:
+    """The name the CITATION COUNT compares: where, which number.
+
+    An address is where a number is cited and which number it is; the owner is
+    who the position rule says the number belongs to.  The two are different
+    facts, and the count this file protects is about the first one: it asks
+    whether the tree still cites at least as many ADDRESSES as the pinned tree
+    did.  Counting the owner inside the identity made a change of ownership
+    read as a removal -- measured on 8aafbf4, resolving a document-relative
+    link moved four citations to a more specific owner and the count called
+    all four removed, while the addresses were all still cited and three of
+    them had had NO owner at all before.
+    """
+    return f"{rel}|{number}"
+
+
 def read_json_or(path: Path, what: str) -> "dict | None":
     """The file's JSON, or None when there is no such file.
 
@@ -918,6 +934,51 @@ def file_mentions(line: str) -> list[tuple[int, int, str]]:
         token = m.group(0).rstrip(".")
         if token in TARGETS or TREE.tracked(token):
             found.append((m.start(), m.end(), token))
+    return found
+
+
+# A markdown link's target, in a document, is written relative to the
+# document's own directory.  `docs/BOARD.md` says `[AUDIT.md](AUDIT.md)` and
+# means `docs/AUDIT.md`.  The path-shaped scan above reads the repo path, so
+# the relative name was never a mention -- and a mention is what the owner
+# rule reads, so the line's owner was decided without it.
+LINK_TARGET = re.compile(r"\]\(([^)\s]+)\)")
+
+
+def link_mentions(line: str, doc: str) -> list[tuple[int, int, str]]:
+    """(start, end, path) for tracked files a markdown link on this line names.
+
+    The link target is resolved against the DIRECTORY of the citing document,
+    which is what a reader does when they click it.  A target with a scheme
+    (`https:`), an anchor-only target (`#section`), or one that does not
+    resolve to a tracked file is not a mention -- it names nothing the tree
+    holds.
+    """
+    found = []
+    base = PurePosixPath(doc).parent
+    for m in LINK_TARGET.finditer(line):
+        target = m.group(1).split("#")[0]
+        if not target or "://" in target or target.startswith("#"):
+            continue
+        if target.startswith("/"):
+            resolved = PurePosixPath(target.lstrip("/"))
+        else:
+            resolved = base / target
+        parts = []
+        for part in resolved.parts:
+            if part == ".":
+                continue
+            if part == "..":
+                if parts:
+                    parts.pop()
+                continue
+            parts.append(part)
+        rel = "/".join(parts)
+        if not rel:
+            continue
+        if rel not in TARGETS and not TREE.tracked(rel):
+            continue
+        found.append((m.start(1), m.end(1), rel))
     return found
 
 
@@ -1159,6 +1220,16 @@ def scan() -> dict:
             for offset, line in enumerate(lines):
                 lineno = first + offset
                 mentions = file_mentions(line)
+                for _s, _e, token in link_mentions(line, rel):
+                    if token not in {t for _a, _b, t in mentions}:
+                        mentions = mentions + [(_s, _e, token)]
+                # The owner rule takes the LAST mention that ends at or before
+                # the number, so the order of this list is the rule.  A link
+                # target is a mention like any other and has to be in the
+                # order the line puts it in: appended at the end, a link that
+                # sits at column 140 would outrank a name at column 219 and
+                # would own every number after it.
+                mentions.sort()
                 if not mentions:
                     continue
                 if any(tok in TARGETS for _s, _e, tok in mentions):
@@ -2049,7 +2120,47 @@ def main() -> int:
     ids_base = Counter(ids_base_of_pin)
     now_total = sum(citations_now.values())
     base_total = sum(ids_base.values())
-    gone = sorted((ids_base - citations_now).elements())
+    # What the count compares is the ADDRESS of a citation -- the document and
+    # the number -- and not the owner the position rule attributes it to.  A
+    # removal is an address that the pinned tree cited and this tree does not.
+    # An owner that changed is not a removal: the address is still cited, and
+    # the count this block protects is about coverage, not about attribution.
+    # Measured on 8aafbf4: resolving a document-relative link moved four
+    # citations to a more specific owner, three of which had had NO owner at
+    # all before, and the address comparison says removed=0.
+    addr_now = Counter(citation_address(rel, num) for rel, num, _o in r["citations"])
+    addr_base = Counter(
+        citation_address(*row.rsplit("|", 2)[:2]) for row in ids_base_of_pin
+    )
+    # The identity a receipt must name for an address that is gone: the FULL
+    # identity as the PINNED tree recorded it -- document, number and the
+    # owner that tree attributed it to -- because that is the citation the
+    # receipt is talking about, and a receipt names one citation, not a
+    # document.
+    identity_of_address = {
+        citation_address(*row.rsplit("|", 2)[:2]): row
+        for row in ids_base_of_pin
+    }
+    gone = sorted(
+        identity_of_address.get(addr, addr)
+        for addr in (addr_base - addr_now)
+    )
+    # An address that is still cited but whose owner changed.  Not a removal,
+    # and not a failure either -- but it is a fact about the tree that a
+    # reader of this report should not have to guess, so it is named.
+    owner_now_of_address = {
+        citation_address(rel, num): (owner or "<none>")
+        for rel, num, owner in r["citations"]
+    }
+    owner_of_address = {
+        citation_address(*row.rsplit("|", 2)[:2]): (row.rsplit("|", 2)[2] or "<none>")
+        for row in ids_base_of_pin
+    }
+    moved = sorted(
+        (addr, owner_of_address.get(addr, "<none>"), owner_now_of_address[addr])
+        for addr in sorted(set(addr_now) & set(addr_base))
+        if owner_of_address.get(addr, "<none>") != owner_now_of_address[addr]
+    )
     appeared = sorted((citations_now - ids_base).elements())
     removed, added = len(gone), len(appeared)
     _tree_short = subprocess.run(
@@ -2061,6 +2172,8 @@ def main() -> int:
         f"|added={added}|tree={_tree_short}|scope={CITATIONS_SCOPE}"
         f"|writing={','.join(WRITINGS)}"
     )
+    for _addr, _was, _now_owner in moved[:20]:
+        print(f"CITATIONS|moved|{_addr}|{_was}|{_now_owner}")
     _pin = read_json_or(CITATIONS_PIN, "the citation pin")
     if _pin:
         print(

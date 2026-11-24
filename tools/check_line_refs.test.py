@@ -259,6 +259,47 @@ AMBIG_NOISE_PLAIN_TEXT = "\n".join(
 ) + "\n"
 
 
+# --- cell: a document-relative link is a mention -------------------------
+#
+# A Markdown link target is resolved against the directory of the document
+# that carries it, so `[cited.md](cited.md)` inside `docs/fix/rel-link.md`
+# names `docs/fix/cited.md`.  The mention scan used to read only REPOSITORY
+# paths, so a relative target was never a mention at all: the position rule
+# -- "the last tracked name ENDING at or before the number" -- could not see
+# it, and the owner it chose was some other file the line happened to name.
+#
+# Measured on 8aafbf4: 127 citing lines name a relative target that the
+# mention scan did not know about, and 183 citations changed owner once the
+# relative targets were resolved.
+#
+# The fixture puts the link LAST on the line, so if the link is a mention
+# then it owns the number; if it is not, `CMakeLists.txt` (named earlier on
+# the same line) owns it and the cell fails.
+REL_DOC = "docs/fix/rel-link.md"
+REL_CITED = "docs/fix/cited.md"
+REL_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`CMakeLists.txt` is named, and [cited.md](cited.md) owns `:7`.\n"
+)
+# Line 7 of the LINKED file carries the quoted text of the citing line, so the
+# citation is held there -- but only if the link is a mention at all.  If the
+# link is invisible to the mention scan, the owner is CMakeLists.txt, whose
+# line 7 carries no quoted text, and the citation is held by nobody.
+REL_CITED_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "one",
+        "two",
+        "three",
+        "four",
+        "the file `CMakeLists.txt` is named here",
+        "",
+    ]
+) + "\n"
+
+
 class FakeTree:
     """Just enough of Tree for scan(): four files, no git."""
 
@@ -614,6 +655,150 @@ WORD_REAL_TEXT = (
 )
 
 
+def check_relative_link() -> int:
+    """A document-relative link target is a mention, and it owns its number.
+
+    Two facts are asserted, because either one alone would let the defect
+    back in:
+
+      1  the relative target is RESOLVED -- the mention set of the line
+         contains the tracked file the link names, resolved against the
+         document's own directory;
+      2  the OWNER follows from that -- the link is the last name on the
+         line, so the number belongs to the linked file and not to the
+         repository path named earlier on the same line.
+
+    The reverse is also asserted: a link to a file that is NOT tracked names
+    nothing, so it cannot take a number away from the file the line names
+    in plain text.
+    """
+    failures = 0
+
+    files = {
+        REL_DOC: REL_DOC_TEXT,
+        REL_CITED: REL_CITED_TEXT,
+        "CMakeLists.txt": "\n".join(
+            ["# fixture", "", "set(X 1)", "set(Y 2)", "set(Z 3)",
+             "set(W 4)", "set(V 5)", "set(U 6)"]
+        ) + "\n",
+    }
+
+    # cell 1: the link is resolved to a tracked file
+    resolve = getattr(C, "link_mentions", None)
+    if resolve is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL link/rule -- the checker has no "
+              "rule for a document-relative link target, so a relative link "
+              "can never be the file a citation is about")
+        return failures
+    old_tree = C.TREE
+    C.TREE = FakeTree(files)
+    try:
+        got = resolve(REL_DOC_TEXT.splitlines()[2], REL_DOC)
+        # A link to a file nobody tracks names nothing.
+        got_untracked = resolve("[nope.md](nope.md) and `CMakeLists.txt`", REL_DOC)
+    finally:
+        C.TREE = old_tree
+    if [t for _s, _e, t in got] != [REL_CITED]:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL link/resolve -- the relative "
+              f"target of [{REL_CITED}] resolved to {[t for _s, _e, t in got]!r}, "
+              f"expected [{REL_CITED!r}]")
+    if [t for _s, _e, t in got_untracked] != []:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL link/untracked -- a link to an "
+              f"untracked file named {[t for _s, _e, t in got_untracked]!r}")
+
+    # cell 2: the owner is the linked file
+    r = scan_with(files)
+    rows = [row for row in r["held_rows"] if row[1] == 3]
+    if not rows:
+        failures += 1
+        print("check_line_refs.test.py: FAIL link/owner -- the citation on "
+              f"the link line is not held at all: {r['held_rows']!r}")
+        return failures
+    if rows[0][3] != REL_CITED:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL link/owner -- the owner of the "
+              f"number is {rows[0][3]!r}, expected {REL_CITED!r}: the link is "
+              "the last name on the line, so the position rule gives the "
+              "number to the linked file")
+    return failures
+
+
+def check_citation_address() -> int:
+    """A citation has an address and an identity, and they are not the same.
+
+    The count the citation pin keeps asks whether the tree still cites at
+    least as many ADDRESSES as the pinned tree did -- a document and a
+    number.  The IDENTITY of a citation adds the owner the position rule
+    attributes it to, and a receipt has to name the whole identity, because
+    a receipt talks about one citation and not about a document.
+
+    Putting the owner inside the identity used to make the count call a
+    change of owner a removal: measured on 8aafbf4, resolving a
+    document-relative link moved four citations to a more specific owner --
+    three of which had had NO owner at all -- and the count called all four
+    removed while the addresses were all still cited.
+
+    So the two are asserted to be different things, and to be built from
+    each other rather than invented twice.
+    """
+    failures = 0
+    address = getattr(C, "citation_address", None)
+    if address is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL address/rule -- the checker has "
+              "no notion of the address of a citation, so it cannot tell a "
+              "removal from a change of owner")
+        return failures
+    if address("docs/API.md", 151) != "docs/API.md|151":
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL address/rule -- the address of "
+              f"docs/API.md:151 is {address('docs/API.md', 151)!r}, expected "
+              f"'docs/API.md|151'")
+    ident = getattr(C, "citation_id", None)
+    if ident is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL address/identity -- the checker "
+              "has no notion of the identity of a citation")
+        return failures
+    # The identity keeps the owner; the address drops it.  The same citation
+    # has both, and they differ exactly in the owner.
+    if ident("docs/API.md", 151, "CMakeLists.txt") != "docs/API.md|151|CMakeLists.txt":
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL address/identity -- the identity "
+              f"is {ident('docs/API.md', 151, 'CMakeLists.txt')!r}")
+    if ident("docs/API.md", 151, None) != "docs/API.md|151|<none>":
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL address/identity -- a citation "
+              f"with no owner is {ident('docs/API.md', 151, None)!r}")
+    if address("docs/API.md", 151) == ident("docs/API.md", 151, "CMakeLists.txt"):
+        failures += 1
+        print("check_line_refs.test.py: FAIL address/identity -- the address "
+              "is the whole identity; then a change of owner reads as a "
+              "removal, which is the defect this cell exists for")
+    # The same address under two different owners: ONE address, TWO
+    # identities.  That is the whole point of the two names -- the count
+    # compares the address, so the change of owner does not move the
+    # count, and the receipt names the identity, so it can say which
+    # citation it excuses.
+    one_address = address("docs/API.md", 151)
+    two_identities = {
+        ident("docs/API.md", 151, "CMakeLists.txt"),
+        ident("docs/API.md", 151, "docs/streams/aot-backend.md"),
+    }
+    if len(two_identities) != 2:
+        failures += 1
+        print("check_line_refs.test.py: FAIL address/identity -- two owners "
+              f"at one address gave {len(two_identities)} identities")
+    if {i.rsplit("|", 1)[0] for i in two_identities} != {one_address}:
+        failures += 1
+        print("check_line_refs.test.py: FAIL address/identity -- the two "
+              "identities do not share the address of the citation")
+    return failures
+
+
 def check_word_boundary() -> int:
     """A span must be a word in the cited line, not a fragment of one.
 
@@ -726,6 +911,8 @@ def main() -> int:
     failures += check_symbol_grade()
     failures += check_coincidence_is_counted()
     failures += check_ambiguity_is_counted()
+    failures += check_relative_link()
+    failures += check_citation_address()
     failures += check_word_boundary()
 
     if failures:
@@ -736,8 +923,10 @@ def main() -> int:
           "Markdown reads them; `own` is held by the owner; a code owner "
           "can be held by a symbol; a hold by a file that is not the owner is "
           "counted as a coincidence; a reference two of the named files can "
-          "hold is counted as ambiguous; a span is a word in the cited line, "
-          "not a fragment of one")
+          "hold is counted as ambiguous; a document-relative link is a "
+          "mention; a citation has an address and an identity and they are "
+          "not the same; a span is a word in the cited line, not a fragment "
+          "of one")
     return 0
 
 
