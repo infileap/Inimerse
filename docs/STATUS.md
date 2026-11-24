@@ -18256,7 +18256,7 @@ discovered until the `picked up` grade is either removed or made honest.
 **A stage function must be defined at top level, before the dispatch loop.**
 The dispatch loop passes the function NAME to `run_stage`, so bash resolves it
 at call time; a definition inside another function's body is never a
-definition.  Inserting the block after gate.sh:1286 landed it inside
+definition.  Inserting the block after gate.sh line 1286 landed it inside
 `stage_shared_tmp()`, and the gate said:
 
     tools/gate.sh: line 195: stage_scope_claims: command not found
@@ -18266,7 +18266,7 @@ functions with the awk pattern `/^stage_[a-z_]+\(\) *\{/`, which requires the
 `{` to end the line, and clears its state on `/^\}/`.  A one-line
 `stage_x() { python3 ...; }` matches neither, so the derived-edge parser keeps
 the previous function's name and attributes the following lines' paths to it.
-The safe insertion point is after HEAD gate.sh:1353 (the `}` that closes
+The safe insertion point is after HEAD gate.sh line 1353 (the `}` that closes
 `stage_word_refs`), which is below 1286 and above the dispatch loop at ~1384.
 
 **A registered stage must be reached by a rule of its own.**  `--required-for`
@@ -18297,7 +18297,7 @@ The gate now runs **33 stages / 231 CTests**, all green.
 ### 7. What this round does not settle
 
 The `picked up` grade is a coincidence, and this round worked around it rather
-than fixing it: the constraint "insert below gate.sh:1286" is a workaround for
+than fixing it: the constraint "insert below gate.sh line 1286" is a workaround for
 a checker that lets an unrelated file's line number carry a citation.  A checker
 that graded a hold as held only when the cited file's own line carries the
 span -- or that reported `picked up` holds in a way a reader can audit --
@@ -18310,7 +18310,7 @@ gate red.
 ### 1. Where the next thing was
 
 §10.270 ended by naming what it had worked around rather than fixed: the
-`picked up` grade, and with it the rule "insert below gate.sh:1286" -- a
+`picked up` grade, and with it the rule "insert below gate.sh line 1286" -- a
 constraint that exists because an unrelated file's line NUMBER can carry a
 citation.
 
@@ -19569,3 +19569,167 @@ dispute.
 prose -- "see the AUDIT file" -- names no file that a checker can
 resolve, and it names no mention, and the position rule cannot see it.
 That is the remaining shape of the same blind spot.
+
+## §10.278 — the two filename shapes the owner rule could not read
+
+**1. Where the round starts.** §10.277 §9 left one blind spot named:
+link resolution is for Markdown links only, so a reference written in
+prose names no file that a checker can resolve, names no mention, and
+the position rule cannot see it. Measuring it found that the blind
+spot has three shapes, and that one of the three is not a blind spot at
+all -- it is a shape that a rule should refuse to guess.
+
+**2. The candidate the data refuses.** A bare basename in prose. In
+this tree 171 lines mention a tracked file by a basename that is
+unique in the tree, and the mention scan picks none of them up. The
+obvious repair -- add every bare basename on the line to the mention
+set -- was measured by applying it: it changes 124 owners, of which
+11 are better, 13 are worse, and 99 are neutral. The net is negative.
+
+The counterexample that decides it is one line. docs/AUDIT.md line
+3331 reads `TEXT_NAMES = frozenset({"CMakeLists.txt", "LICENSE",
+"Makefile", "Dockerfile"})`, and the basename pass would name
+`Makefile` as the owner of that line's number. `Makefile` there is a
+member of a set literal -- a list of names, not a reference target. A
+filename in prose carries two meanings, the thing the citation points
+at and a name that is merely mentioned, and no syntax distinguishes
+them. The rule must not guess at the first, and the ambiguity count
+measured in §10.275 is the right place for the ones it cannot resolve.
+
+**3. The two shapes that are readable.** Both are shapes where the
+number and the name are adjacent, which is what makes the name an
+address rather than a mention.
+
+The first is a **unique basename written immediately against the
+number**. A tail of the form `name.ext` ending at the colon is taken
+as a mention when the basename resolves to exactly one tracked file.
+Measured over every number-bearing line, this changes 30 owners: 10
+better, 0 worse, 20 neutral. The better ones are citations that had
+no owner at all and now have one -- docs/AUDIT.md line 4128 cites
+the reference to compiler.c at line 2210, and the owner is now src/compiler/compiler.c;
+docs/AUDIT.md line 5462's `:423` is now src/runtime/runtime_posix.c;
+docs/BOARD.md line 118's `:7-16` is now
+Infiverse_standard/src/ui/app.js; docs/BOARD.md line 164's `:107` is
+now src/mod/json_mod.c.
+
+The second is a **path that begins with a dot**. `PATHISH`'s first
+character class is `[A-Za-z0-9_]`, which excludes the dot, so
+`.github/workflows/release.yml` was matched as
+`github/workflows/release.yml`: the leading dot was dropped, the real
+path was not in the tracked set, and the citation had no owner. The
+tracked set has six dot-prefixed files; 82 lines mention them and 25
+of those carry a number. The pass adds 17 mentions
+(linux-build.yml 13, release.yml 3, windows-build.yml 1) and changes
+5 owners, 2 better, 0 worse, 3 neutral -- three of them citations
+that had no owner at all, now held by .github/workflows/release.yml.
+
+**4. The suffix that had to be deleted rather than constrained.** The
+first version of the basename rule walked the tail from the longest
+suffix downward, so the reference to src/mod/io_mod.c at line 315 matched both `io_mod.c`
+and `mod.c`, and the owner became src/mod/mod.c -- 315 changes, 75
+worse. The fix was to take the whole tail and drop the walk, because a
+variant with a strictly bounded suffix was measured to differ from the
+whole-string version on zero rows. The walk was not constrained; it
+was removed. This is the "print the raw text before writing a parser"
+lesson surfacing again, this time inside a regex.
+
+**5. The report that was counting two different things.** The citation
+count's `removed` was compared by address while its `added` was
+compared by identity, so one tree printed `removed=0|added=16` and a
+reader would conclude that the tree had gained sixteen citations. It
+had gained none: every one of the sixteen was an owner change. The
+comparison is now one function, `citation_diff`, and both sides
+compare addresses; the receipt for a removed citation still names its
+full identity, and a citation whose owner changed is reported on a
+line of its own. This is the same family of defect this series keeps
+finding -- one comparison whose two halves use different identities.
+
+**6. What it costs.** Nothing, and the reading says so. held 618
+unchanged, unanchored 563 unchanged, coincident 234 to 233,
+ambiguous 172, explicit 185, symbol 86 to 87, picked up 458 to 457.
+No pin moved: explicit delta +12 (expect +12), unanchored delta -2
+(ceiling +0), coincidental delta +0 (ceiling +0, 233 of 618),
+ambiguous delta +0 (ceiling +0, 172).
+
+**The delta that moved has a cause, and it is not the tree.** The
+unanchored delta went from -5 to -2 while the tree's own reading sat
+fixed at 563. The base tree was re-measured with the new ruler and its
+reading fell from 568 to 565. The ruler changed and it measured the
+baseline too; a delta change with an unchanged tree reading is the
+signature of that, and is not evidence of drift.
+
+**The scale of the change is smaller than the raw count of owner
+changes.** Measured over all number-bearing lines, the basename pass
+changes 30 owners and the dot pass 5. The checker's own report, taken
+by running the two checkers on this tree and diffing them, shows five
+held rows, six unanchored rows, twelve citation owners and one
+out-of-range row changed -- every one an owner change, none an address
+added or removed. The two figures differ because the report counts
+only a line that names a target and carries a number, while the other
+counts every line with a number. Both are measurements; they are not
+measurements of the same thing.
+
+**7. The controls.** Four new cells in the checker's own test. The
+dot path resolves, refuses an untracked dot path, and makes the dot
+path the owner. The adjacent basename resolves, refuses a basename
+that is not against a number, and makes what it resolved the owner.
+The ambiguity control puts two `compiler.c` in the fixture tree:
+neither is resolved and neither enters the mention set. The
+citation-diff cell has four sub-cells: an owner swap leaves the
+removal and the addition empty and moves one; a real removal reports
+the full identity; a real addition reports the address; a citation
+that gains an owner reports the move with `<none>` as the old owner.
+
+**The fixture had to be written the way the rule reads.** The first
+version wrote "compiler.c owns `:7`", and the tail rule looks for the
+name immediately against the number, so the intervening word meant the
+basename was not a mention, the citation was not held at all, and the
+cell failed on the wrong fact. Written as compiler.c against the number 7 it
+passes. A test written from the shape of the sentence rather than the
+shape of the rule measures nothing.
+
+**The negative control.** With the checker of b76cced4 and the new
+cells, the control fails as it must: the old checker has no rule for a
+path that begins with a dot, no rule for a bare basename against a
+number, and no single place that compares its citations with the pin,
+so all four cells fail.
+
+**8. What changed.** `tools/check_line_refs.py`: `dotted_path_mentions`
+and `adjacent_basename_mentions` and `unique_basenames`, three lines
+appended to `file_mentions`, and `citation_diff` extracted out of
+`main` so that the count compares addresses on both sides.
+`tools/check_line_refs.test.py`: the four cells, and the accessor the
+uniqueness rule needs to see the whole tracked list.
+`docs/STATUS.md`: four lines rewritten, below. No pin file was
+rewritten and no pin moved.
+
+**The ruler also found four of its own earlier violations.** docs/STATUS.md
+lines 18259, 18269, 18300 and 18313 carried the path gate.sh at
+line 1286 and the path gate.sh at line 1353 in the §10.270 writeup -- exactly the path-then-number
+shape the repository's own rule forbids. The old ruler could not see
+them; the new one could, and all four became unanchored. They are now
+written as the path gate.sh at line 1286 and the path gate.sh at line 1353.
+
+**9. What this round does not settle.**
+
+**A dot-prefixed name is still only one shape of it.** A dot-prefixed
+name that is not a tracked path is not a mention, and a basename that
+resolves to two files is not resolved either: 148 number-bearing lines
+name one of 34 basenames that the tree shares, the largest being
+set_test.im (15), .gitignore (14), README.md (13), set_op_test.im
+(13), lib.rs (12) and RELEASE_0.5.0.md (12). The rule refuses rather
+than guesses, and §10.275's ambiguity count is what carries the ones
+it refuses.
+
+**The count of owner changes is still a report, not a pin.** Twelve
+citation owners and five held rows changed this round, and nothing
+fails when they do. A third pin on the same ground is the same
+objection §10.277 §9 recorded.
+
+**The three shapes measured are the shapes with a syntax.** The
+remaining shape is a name in prose with no number against it, or a
+number with no name the ruler can read. It was measured this round and
+refused, so what is left is not a rule to write but a count to carry:
+the ambiguity count is the measure for it, and the coincidence count
+is the measure for the ones whose owner the ruler resolves to a file
+that does not hold the line.
