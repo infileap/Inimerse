@@ -100,10 +100,27 @@ def main() -> int:
         tail = added.stderr.strip().splitlines()
         refuse("could not create a throwaway worktree" + (": " + tail[-1] if tail else ""))
     try:
-        # Test the version being committed, not the one in HEAD: copy it in and
-        # commit it in the copy, because --write-citations-pin pins a tree and
-        # refuses to pin a dirty one.
-        shutil.copy2(ROOT / TOOL, tree / TOOL)
+        # Test the version being committed, not the one in HEAD: copy the whole
+        # working tree's modifications in and commit them in the copy, because
+        # --write-citations-pin pins a tree and refuses to pin a dirty one, and
+        # because the tool's deltas are pinned against the tree the round is
+        # committed into.  Copying only the tool would run it against HEAD's
+        # documents, which is a tree the tool was never committed into: a round
+        # that moves a citation's writing shifts the explicit delta there while
+        # the committed tree reads the pinned value, and the control would redden
+        # on a fact about the copy rather than about the tool.
+        changed = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-status"],
+                                 capture_output=True, text=True).stdout.splitlines()
+        for line in changed:
+            fields = line.split("\t")
+            status, name = fields[0], fields[-1]
+            src = ROOT / name
+            if status.startswith("D"):
+                (tree / name).unlink(missing_ok=True)
+            elif src.is_file():
+                shutil.copy2(src, tree / name)
+        if not (tree / TOOL).exists():
+            refuse(f"the working tree's diff does not carry {TOOL}, so the copy has no tool to test")
         subprocess.run(["git", "-C", str(tree), "add", "-A"], check=True)
         # --allow-empty: once the tool is committed, the copy and HEAD agree, and
         # a commit that stages nothing would fail with a message git writes to

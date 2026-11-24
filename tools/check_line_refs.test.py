@@ -309,6 +309,11 @@ class FakeTree:
     def tracked(self, rel):
         return rel in self._files
 
+    def _tracked(self):
+        """The whole tracked list, which unique_basenames() needs to know
+        whether a basename names exactly one file."""
+        return sorted(self._files)
+
     def text(self, rel):
         return self._files.get(rel, "")
 
@@ -867,6 +872,251 @@ def check_word_boundary() -> int:
     return failures
 
 
+# --- cell: a path that begins with a dot --------------------------------
+#
+# `PATHISH` starts at a letter, so `.github/workflows/release.yml` matched as
+# `github/workflows/release.yml`, the leading dot was dropped, and no tracked
+# file is called that -- the real path was never a mention, and a citation of
+# it could not have an owner.  Six tracked files begin with a dot.
+DOT_DOC = "docs/fix/dot-doc.md"
+DOT_CITED = ".github/workflows/release.yml"
+DOT_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`CMakeLists.txt` is named, and `.github/workflows/release.yml` owns `:7`.\n"
+)
+DOT_CITED_TEXT = "\n".join(
+    ["name: ci", "", "one", "two", "three", "four", 'quoted: "CMakeLists.txt"']
+) + "\n"
+
+
+# --- cell: a bare basename written against the number --------------------
+#
+# `compiler.c:2210` is a citation of `src/compiler/compiler.c`, but the path
+# scan drops it because `compiler.c` is not a repo path.  Only a basename the
+# TREE can resolve to exactly one file may be named, and only the name that ends
+# exactly where the number starts -- a basename elsewhere on the line is a word
+# the prose used, and the prose uses file names for two things at once.
+BASE_DOC = "docs/fix/basename-doc.md"
+BASE_CITED = "src/fix/compiler.c"
+BASE_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`CMakeLists.txt` is named, and compiler.c:7 is cited.\n"
+)
+BASE_CITED_TEXT = "\n".join(
+    ["/* fixture */", "", "one", "two", "three", "four",
+     'quoted: "CMakeLists.txt"']
+) + "\n"
+
+
+def check_dotted_path() -> int:
+    """A dot-prefixed path is a mention, and it owns the number after it."""
+    failures = 0
+    resolve = getattr(C, "dotted_path_mentions", None)
+    if resolve is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL dot/rule -- the checker has no "
+              "rule for a path that begins with a dot, so a citation of a "
+              "dot-prefixed file can never have an owner")
+        return failures
+    files = {
+        DOT_DOC: DOT_DOC_TEXT,
+        DOT_CITED: DOT_CITED_TEXT,
+        SRC: SRC_TEXT,
+    }
+    old_tree = C.TREE
+    C.TREE = FakeTree(files)
+    try:
+        got = resolve(DOT_DOC_TEXT.splitlines()[2], [])
+        # A dot path to a file nobody tracks names nothing.
+        got_untracked = resolve("see .nope/other.yml and `CMakeLists.txt`", [])
+    finally:
+        C.TREE = old_tree
+    if [t for _s, _e, t in got] != [DOT_CITED]:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL dot/resolve -- a dot-prefixed "
+              f"path resolved to {[t for _s, _e, t in got]!r}, expected "
+              f"[{DOT_CITED!r}]")
+    if [t for _s, _e, t in got_untracked] != []:
+        failures += 1
+        print("check_line_refs.test.py: FAIL dot/untracked -- a dot path to an "
+              f"untracked file named {[t for _s, _e, t in got_untracked]!r}")
+
+    # the owner is the dot path, not the repo path named earlier on the line
+    r = scan_with(files)
+    rows = [row for row in r["held_rows"] if row[1] == 3]
+    if not rows:
+        failures += 1
+        print("check_line_refs.test.py: FAIL dot/owner -- the citation of the "
+              f"dot path is not held at all: {r['held_rows']!r}")
+        return failures
+    if rows[0][3] != DOT_CITED:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL dot/owner -- the owner of the "
+              f"number is {rows[0][3]!r}, expected {DOT_CITED!r}")
+    return failures
+
+
+def check_adjacent_basename() -> int:
+    """A unique basename against the number is a mention that owns the number."""
+    failures = 0
+    resolve = getattr(C, "adjacent_basename_mentions", None)
+    if resolve is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL basename/rule -- the checker has "
+              "no rule for a bare basename written against a number, so a "
+              "citation of src/compiler/compiler.c at compiler.c:2210 has no "
+              "owner")
+        return failures
+    files = {
+        BASE_DOC: BASE_DOC_TEXT,
+        BASE_CITED: BASE_CITED_TEXT,
+        SRC: SRC_TEXT,
+    }
+    old_tree = C.TREE
+    C.TREE = FakeTree(files)
+    try:
+        got = resolve("compiler.c:7", [])
+        # Not adjacent to a number: the prose merely used the name.
+        got_away = resolve("the file compiler.c is only mentioned here", [])
+    finally:
+        C.TREE = old_tree
+    if [t for _s, _e, t in got] != [BASE_CITED]:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL basename/resolve -- "
+              f"compiler.c:7 resolved to {[t for _s, _e, t in got]!r}, "
+              f"expected [{BASE_CITED!r}]")
+    if [t for _s, _e, t in got_away] != []:
+        failures += 1
+        print("check_line_refs.test.py: FAIL basename/adjacency -- a basename "
+              "that does not sit against a number named "
+              f"{[t for _s, _e, t in got_away]!r}")
+
+    # the owner is the resolved file, not the repo path named earlier
+    r = scan_with(files)
+    rows = [row for row in r["held_rows"] if row[1] == 3]
+    if not rows:
+        failures += 1
+        print("check_line_refs.test.py: FAIL basename/owner -- the citation of "
+              f"the basename is not held at all: {r['held_rows']!r}")
+        return failures
+    if rows[0][3] != BASE_CITED:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL basename/owner -- the owner of "
+              f"the number is {rows[0][3]!r}, expected {BASE_CITED!r}")
+    return failures
+
+
+def check_basename_ambiguity() -> int:
+    """A basename the tree cannot resolve to one file names nothing.
+
+    Two files called compiler.c is the whole reason the name is refused: naming
+    either of them puts a file on a line that never wrote that path, and the
+    position rule then attributes a citation to a file that was never a
+    candidate.  Every ambiguous basename is left unread.
+    """
+    failures = 0
+    resolve = getattr(C, "adjacent_basename_mentions", None)
+    if resolve is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL basename/amb -- the checker has "
+              "no rule for a bare basename against a number, so the ambiguity "
+              "control cannot be driven")
+        return failures
+    files = {
+        BASE_DOC: BASE_DOC_TEXT,
+        "src/fix/compiler.c": BASE_CITED_TEXT,
+        "tools/fix/compiler.c": BASE_CITED_TEXT,
+        SRC: SRC_TEXT,
+    }
+    old_tree = C.TREE
+    C.TREE = FakeTree(files)
+    try:
+        got = resolve("compiler.c:7", [])
+        mentioned = [
+            t for _s, _e, t in C.file_mentions(BASE_DOC_TEXT.splitlines()[2])
+        ]
+    finally:
+        C.TREE = old_tree
+    if [t for _s, _e, t in got] != []:
+        failures += 1
+        print("check_line_refs.test.py: FAIL basename/amb -- compiler.c is "
+              "shared by two files, and the rule named "
+              f"{[t for _s, _e, t in got]!r} anyway")
+    # The line names neither of them: an ambiguous name is not a candidate, so
+    # it is absent from the mention set and cannot take the number from the
+    # repo path the line did write.
+    if set(mentioned) & {"src/fix/compiler.c", "tools/fix/compiler.c"}:
+        failures += 1
+        print("check_line_refs.test.py: FAIL basename/amb -- a citation line "
+              f"mentioned {sorted(mentioned & {'src/fix/compiler.c', 'tools/fix/compiler.c'})} "
+              "even though the tree cannot resolve compiler.c to one file")
+    return failures
+
+
+def check_citation_diff_symmetry() -> int:
+    """The two sides of the citation count compare the same thing.
+
+    The removal side was counted by ADDRESS and the addition side by full
+    IDENTITY, so this very tree reported removed=0 and added=16 -- read as
+    sixteen new citations when no citation was added and sixteen owners had
+    simply changed.  Each cell below is one side of the same comparison.
+    """
+    failures = 0
+    diff = getattr(C, "citation_diff", None)
+    if diff is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL diff/rule -- the checker does "
+              "not compare its citations with the pin in one place, so the two "
+              "sides of that comparison can drift apart")
+        return failures
+    # cell 1: a change of owner removes nothing and adds nothing.
+    gone, appeared, moved, totals = diff(
+        [("docs/API.md", 151, "src/fix/x.c")], ["docs/API.md|151|src/fix/y.c"]
+    )
+    if gone or appeared:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL diff/symmetry -- one owner "
+              f"changed at docs/API.md:151 and the comparison says "
+              f"gone={gone!r} appeared={appeared!r}")
+    if len(moved) != 1:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL diff/moved -- a change of owner "
+              f"was reported {len(moved)} times, expected 1")
+    # cell 2: a real removal names the FULL identity the pin recorded.
+    gone, appeared, moved, _totals = diff([], ["docs/API.md|151|src/fix/y.c"])
+    if gone != ["docs/API.md|151|src/fix/y.c"]:
+        failures += 1
+        print("check_line_refs.test.py: FAIL diff/removal -- a removed "
+              f"citation is reported as {gone!r}")
+    if appeared:
+        failures += 1
+        print("check_line_refs.test.py: FAIL diff/removal -- a tree with no "
+              f"citations reports {appeared!r} as additions")
+    # cell 3: a real addition is an address, not an identity.
+    gone, appeared, moved, _totals = diff([("docs/API.md", 151, None)], [])
+    if gone or appeared != ["docs/API.md|151"]:
+        failures += 1
+        print("check_line_refs.test.py: FAIL diff/addition -- one new citation "
+              f"is reported as gone={gone!r} appeared={appeared!r}")
+    # cell 4: a citation that GAINED an owner reads as moved, not as added.
+    gone, appeared, moved, _totals = diff(
+        [("docs/API.md", 151, None)], ["docs/API.md|151|src/fix/y.c"]
+    )
+    if gone or appeared:
+        failures += 1
+        print("check_line_refs.test.py: FAIL diff/gained -- a citation that "
+              "acquired an owner is reported as gone={gone!r} "
+              f"appeared={appeared!r}")
+    if moved != [("docs/API.md|151", "src/fix/y.c", "<none>")]:
+        failures += 1
+        print("check_line_refs.test.py: FAIL diff/gained -- the move is "
+              f"reported as {moved!r}, expected the address, the old owner and "
+              "'<none>'")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -913,6 +1163,10 @@ def main() -> int:
     failures += check_ambiguity_is_counted()
     failures += check_relative_link()
     failures += check_citation_address()
+    failures += check_citation_diff_symmetry()
+    failures += check_dotted_path()
+    failures += check_adjacent_basename()
+    failures += check_basename_ambiguity()
     failures += check_word_boundary()
 
     if failures:
@@ -925,8 +1179,11 @@ def main() -> int:
           "counted as a coincidence; a reference two of the named files can "
           "hold is counted as ambiguous; a document-relative link is a "
           "mention; a citation has an address and an identity and they are "
-          "not the same; a span is a word in the cited line, not a fragment "
-          "of one")
+          "not the same; the two sides of the citation count compare the "
+          "same thing; a path that begins with a dot is a mention; a unique "
+          "basename against a number is a mention; a basename the tree "
+          "cannot resolve names nothing; a span is a word in the cited "
+          "line, not a fragment of one")
     return 0
 
 

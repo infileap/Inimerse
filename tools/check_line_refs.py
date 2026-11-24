@@ -906,6 +906,48 @@ def citation_address(rel: str, number: int) -> str:
     return f"{rel}|{number}"
 
 
+def citation_diff(rows_now, pin_rows):
+    """Compare this tree's citations with the pin: (gone, appeared, moved).
+
+    Both ends of the count are ADDRESSES.  An owner who changed is neither a
+    removal nor an addition: the address is still cited, and this block is about
+    coverage, not attribution.  `moved` is the same comparison read as a report
+    row -- the address, the owner the pinned tree attributed it to and the owner
+    this tree does -- so that a reader can see an attribution change without
+    having to guess whether the count above dropped it.
+
+    A stale `<none>` was the shape that hid this: an owner written as the literal
+    string `<none>` and one written as the empty string were the same address
+    and two different owners, so a row that gained an owner looked like a row
+    that appeared.
+    """
+    addr_now = Counter(citation_address(rel, num) for rel, num, _o in rows_now)
+    addr_base = Counter(citation_address(*row.rsplit("|", 2)[:2]) for row in pin_rows)
+    # The identity a receipt must name for an address that is gone: the FULL
+    # identity as the PINNED tree recorded it -- document, number and the
+    # owner that tree attributed it to -- because that is the citation the
+    # receipt is talking about, and a receipt names one citation, not a
+    # document.
+    identity_of_address = {
+        citation_address(*row.rsplit("|", 2)[:2]): row for row in pin_rows
+    }
+    gone = sorted(identity_of_address.get(addr, addr) for addr in (addr_base - addr_now))
+    appeared = sorted((addr_now - addr_base).elements())
+    owner_now = {
+        citation_address(rel, num): (owner or "<none>") for rel, num, owner in rows_now
+    }
+    owner_pinned = {
+        citation_address(*row.rsplit("|", 2)[:2]): (row.rsplit("|", 2)[2] or "<none>")
+        for row in pin_rows
+    }
+    moved = sorted(
+        (addr, owner_pinned.get(addr, "<none>"), owner_now[addr])
+        for addr in sorted(set(addr_now) & set(addr_base))
+        if owner_pinned.get(addr, "<none>") != owner_now[addr]
+    )
+    return gone, appeared, moved, (sum(addr_now.values()), sum(addr_base.values()))
+
+
 def read_json_or(path: Path, what: str) -> "dict | None":
     """The file's JSON, or None when there is no such file.
 
@@ -934,7 +976,9 @@ def file_mentions(line: str) -> list[tuple[int, int, str]]:
         token = m.group(0).rstrip(".")
         if token in TARGETS or TREE.tracked(token):
             found.append((m.start(), m.end(), token))
-    return found
+    found += dotted_path_mentions(line, found)
+    found += adjacent_basename_mentions(line, found)
+    return sorted(found)
 
 
 # A markdown link's target, in a document, is written relative to the
@@ -2115,53 +2159,26 @@ def main() -> int:
     # not raise a ceiling.  This one answers a different question -- "does
     # this tree still cite at least as many addresses as the last pinned
     # one?" -- and answers it with a receipt for any exception.
-    citations_now = Counter(citation_id(*row) for row in r["citations"])
     ids_base_of_pin = list((read_json_or(CITATIONS_PIN, "the citation pin") or {}).get("rows") or [])
+    citations_now = Counter(citation_id(*row) for row in r["citations"])
     ids_base = Counter(ids_base_of_pin)
-    now_total = sum(citations_now.values())
-    base_total = sum(ids_base.values())
     # What the count compares is the ADDRESS of a citation -- the document and
     # the number -- and not the owner the position rule attributes it to.  A
     # removal is an address that the pinned tree cited and this tree does not.
     # An owner that changed is not a removal: the address is still cited, and
-    # the count this block protects is about coverage, not about attribution.
+    # the count this block protects is about coverage, not attribution.
     # Measured on 8aafbf4: resolving a document-relative link moved four
     # citations to a more specific owner, three of which had had NO owner at
     # all before, and the address comparison says removed=0.
-    addr_now = Counter(citation_address(rel, num) for rel, num, _o in r["citations"])
-    addr_base = Counter(
-        citation_address(*row.rsplit("|", 2)[:2]) for row in ids_base_of_pin
+    # Measured on b76cced4: the two sides of this comparison once used two
+    # different identities -- the removal side by address and the addition side
+    # by full identity -- and this same tree reported removed=0 and added=16,
+    # which reads as sixteen new citations when no citation was added.  Both
+    # sides are addresses now; the receipts still name the full identity,
+    # because a receipt names one citation, not a document.
+    gone, appeared, moved, (now_total, base_total) = citation_diff(
+        r["citations"], ids_base_of_pin
     )
-    # The identity a receipt must name for an address that is gone: the FULL
-    # identity as the PINNED tree recorded it -- document, number and the
-    # owner that tree attributed it to -- because that is the citation the
-    # receipt is talking about, and a receipt names one citation, not a
-    # document.
-    identity_of_address = {
-        citation_address(*row.rsplit("|", 2)[:2]): row
-        for row in ids_base_of_pin
-    }
-    gone = sorted(
-        identity_of_address.get(addr, addr)
-        for addr in (addr_base - addr_now)
-    )
-    # An address that is still cited but whose owner changed.  Not a removal,
-    # and not a failure either -- but it is a fact about the tree that a
-    # reader of this report should not have to guess, so it is named.
-    owner_now_of_address = {
-        citation_address(rel, num): (owner or "<none>")
-        for rel, num, owner in r["citations"]
-    }
-    owner_of_address = {
-        citation_address(*row.rsplit("|", 2)[:2]): (row.rsplit("|", 2)[2] or "<none>")
-        for row in ids_base_of_pin
-    }
-    moved = sorted(
-        (addr, owner_of_address.get(addr, "<none>"), owner_now_of_address[addr])
-        for addr in sorted(set(addr_now) & set(addr_base))
-        if owner_of_address.get(addr, "<none>") != owner_now_of_address[addr]
-    )
-    appeared = sorted((citations_now - ids_base).elements())
     removed, added = len(gone), len(appeared)
     _tree_short = subprocess.run(
         ["git", "-C", str(REPO_ROOT), "rev-parse", "--short=7", "HEAD"],
@@ -2428,6 +2445,101 @@ def span_appears(span: str, text: str) -> bool:
             return True
         i = text.find(span, i + 1)
     return False
+
+
+# Two shapes of file name the path scan above cannot read.  Both are decided by
+# the tree, not by a guess: a name either resolves to a tracked file or it does
+# not, and "does not" means the name was never a candidate for the owner rule.
+#
+# (1) A path that begins with a dot.  `PATHISH` starts at `[A-Za-z0-9_]`, so
+# `.github/workflows/release.yml` matches as `github/workflows/release.yml`, the
+# leading dot is dropped, and no tracked file is called that -- the real path
+# was never a mention.  Six tracked files begin with a dot; 82 document lines
+# name one and 25 of those carry a number.  Measured on the tree this was
+# written on: five citations change owner, two of them from a name that holds
+# nothing to `.github/workflows/release.yml`, which holds the quoted text, and
+# none from holding to not holding.
+DOTTED_PATH = re.compile(r"(?<![A-Za-z0-9_./-])\.[A-Za-z0-9_][A-Za-z0-9_./-]*")
+
+
+def dotted_path_mentions(line, found):
+    """(start, end, path) for tracked files named by a dot-prefixed path."""
+    taken = {(s, e) for s, e, _t in found}
+    out = []
+    for m in DOTTED_PATH.finditer(line):
+        token = m.group(0).rstrip(".")
+        if token in TARGETS or TREE.tracked(token):
+            if (m.start(), m.end()) not in taken:
+                out.append((m.start(), m.end(), token))
+    return out
+
+
+# (2) A bare basename written against the number: `compiler.c:2210` is a
+# citation of `src/compiler/compiler.c` and the path scan drops it, because
+# `compiler.c` is not a repo path.  The name has to be resolved, and it may only
+# be resolved when the tree can answer uniquely -- a basename shared by two
+# files names neither of them, and guessing would put a name on a line that
+# never wrote it.  34 basenames are shared; 148 of them sit against a number and
+# every one of those is left unread.  For the names that ARE unique, the tail is
+# taken WHOLE: an earlier version also tried shorter suffixes of it, and
+# `src/mod/io_mod.c:315` then ended with `mod.c` as well as with `io_mod.c`, so
+# `src/mod/mod.c` was put on a citation of io_mod.c -- 315 citations changed
+# owner and 75 of them changed to a file that holds nothing.  Ordering the
+# suffixes longest-first hid that and did not remove it: the shorter match could
+# still fire whenever the longer name was not unique.  Measured with the whole
+# tail: 30 citations change owner, 10 of them to a file that holds the quoted
+# text, and none away from one that did.  Measured again with a suffix loop that
+# refuses to start mid-name: the tree is identical, so the loop was removed
+# instead of being constrained.
+TAIL_NAME = re.compile(r"([A-Za-z0-9_.+-]+\.[A-Za-z0-9]{1,6})$")
+
+
+def unique_basenames():
+    """basename -> path, for the basenames exactly one tracked file has."""
+    index = getattr(TREE, "_uniq_base", None)
+    if index is None:
+        seen = {}
+        for rel in TREE._tracked():
+            if not rel:
+                continue
+            base = rel.rsplit("/", 1)[-1]
+            if base:
+                seen.setdefault(base, []).append(rel)
+        index = {b: v[0] for b, v in seen.items() if len(v) == 1}
+        TREE._uniq_base = index
+    return index
+
+
+def adjacent_basename_mentions(line, found):
+    """(start, end, path) for a unique basename written against the number.
+
+    Only the name that ends exactly where the number starts counts.  A basename
+    anywhere else on the line is a word the prose used, and the prose uses file
+    names for two different things -- the file it is citing, and a file it is
+    merely talking about.  Measured by admitting every basename on the line: 124
+    citations change owner and 13 of them change away from a name that holds the
+    quoted text, more than the 11 that change towards one.  The line
+    `TEXT_NAMES = frozenset({"CMakeLists.txt", "LICENSE", "Makefile"})` is the
+    shape of the cost: `Makefile` is named there as a member of a set, and the
+    rule would put it on the number that follows.
+    """
+    index = unique_basenames()
+    if not index:
+        return []
+    taken = {(s, e) for s, e, _t in found}
+    already = {t for _s, _e, t in found}
+    out = []
+    for m in NUMBER.finditer(line):
+        tail = TAIL_NAME.search(line[: m.start()])
+        if not tail:
+            continue
+        name = tail.group(1)
+        if name not in index:
+            continue
+        start = m.start() - len(name)
+        if (start, m.start()) not in taken and index[name] not in already:
+            out.append((start, m.start(), index[name]))
+    return out
 
 
 if __name__ == "__main__":

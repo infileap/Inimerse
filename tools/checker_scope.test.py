@@ -93,9 +93,25 @@ def main() -> int:
         refuse(f"the throwaway worktree at HEAD has no {CHECKER}")
 
     # The worktree is at HEAD; the tool under test is the one in the tree being
-    # measured, which need not be committed yet.  Copy it over so a run says
-    # what the working checker does, and the documents stay at HEAD.
-    shutil.copy2(ROOT / CHECKER, tree / CHECKER)
+    # measured, which need not be committed yet.  Copy the whole working tree's
+    # modifications, not just the checker: the checker's deltas are pinned
+    # against the tree the round is committed into, so running it against HEAD's
+    # documents measures a tree it was never committed into, and the out-of-scope
+    # cases would redden on a fact about the copy rather than about the checker.
+    changed = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-status"],
+                             capture_output=True, text=True).stdout.splitlines()
+    for line in changed:
+        fields = line.split("\t")
+        status, name = fields[0], fields[-1]
+        src = ROOT / name
+        if status.startswith("D"):
+            (tree / name).unlink(missing_ok=True)
+        elif src.is_file():
+            shutil.copy2(src, tree / name)
+    if not (tree / CHECKER).exists():
+        subprocess.run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(tree)],
+                       capture_output=True)
+        refuse(f"the working tree's diff does not carry {CHECKER}, so the copy has no checker to test")
 
     cases: list[tuple[str, bool, str]] = []
     try:
