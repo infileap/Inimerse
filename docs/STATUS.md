@@ -19929,3 +19929,203 @@ the cited line only inside a comment. The channel has a `holding_kind`
 that separates comment from code, and the grade does not use it. That
 is the next thing on this ground, and it was measured while this round
 was being written.
+
+## §10.280 — the symbol grade and the comment it read
+
+**1. Where this round starts.** §10.279 §9 left the next thing named,
+and it was this: the symbol channel reports that the citing line and
+the owner's line N share an identifier, and on 8 of its 87 rows that
+identifier appears in the cited line only inside a comment. The same
+paragraph observed that the channel carries a `holding_kind` that
+separates a comment line from a code line, and that the grade does not
+use it. It called the case "reported as checked, but the evidence is a
+word in a comment".
+
+Both halves of that paragraph turned out to be wrong in an
+instructive way, and measuring them is what this round is.
+
+**2. What the grade claims, and what it actually measured.** The
+`symbol` grade is the evidence channel for owners written in a
+compiled language. A line of C has no backticks, so the span
+mechanism -- the one that anchors a number to quoted text on the
+cited line -- never fires for it, and the only evidence such an owner
+can give is that the two lines name the same identifier.
+
+The measurement that backs it started from the whole raw line. It
+asked `IDENTIFIER.finditer` for every identifier the cited line
+carries, in the code, in the comments, and inside string literals
+alike, and intersected that set with the citing line's identifiers.
+The grade is a claim about the code -- these two lines are about the
+same symbol -- and the measurement never distinguished the code from
+the prose around it.
+
+**3. The four shapes the evidence had.** Classifying all 87 rows of
+the round's starting tree by where the named identifier sits in the
+cited line, with the comment state carried across lines:
+
+- **62 rows** name an identifier in the cited line's code.
+- **6 rows** name an identifier that is a whole string literal on the
+  cited line. One example is the reference to the aot native backend
+  at docs/BOARD.md line 149: the cited line is
+  `vm_register_builtin(vm, "builtin_lookup", slot_of);`, and in this
+  runtime a builtin's name *is* the string literal it is registered
+  under. A whole literal is a name.
+- **16 rows** name a word that appears in the cited line **only inside
+  a comment**. Eight of those comments start with `/*` on the cited
+  line; the other eight are **continuation lines of a block comment**,
+  which begin with ` * `.
+- **3 rows** name something that is not an identifier of the owner's
+  file at all: `wb_embed` out of `#include "wb_embed.h"`, `compiler`
+  out of `#include "compiler.h"`, and `nv_mod` out of a string literal
+  that holds a whole C function signature.
+
+19 of 87 rows were telling a reader that the cited line had been
+checked for a symbol when the only thing it carried was a word about
+the symbol.
+
+**4. The previous round's own number was produced by the defect it
+named.** §10.279 §9 said 8 rows, not 16. Running the same
+classification with the comment state **not** carried across lines --
+one line at a time, the way a per-line strip reads -- gives exactly
+the previous round's answer: 70 code, 6 whole literal, 8 comment, 3
+not a name. The eight missing rows are the eight continuation lines.
+On a line that begins ` * builtin_lookup returns the FIRST slot`, a
+per-line reading sees the `*` as a multiplication sign and the rest
+as code.
+
+The number that described the defect was produced by the defect. That
+is the sharpest form of the lesson this whole document keeps
+relearning -- a measurement is only as good as the rule it applies --
+and it is why the repair below is a state machine over the file rather
+than a stricter regex over the line.
+
+**5. What the rule is now.** An identifier is evidence when it appears
+in the cited line's **code**, or when it is a **whole string
+literal** on that line. It is not evidence when it appears only in a
+comment, and it is not evidence when it is a fragment of a longer
+literal (`wb_embed` inside `"wb_embed.h"`), because a fragment of a
+name is not a name.
+
+The implementation splits each cited file once, with the block-comment
+state carried from line to line, into three sets per line: the
+identifiers in the code, the complete string literals, and the
+identifiers in the comments. The symbol channel intersects with the
+first two. The splitter is a state machine over characters, not a
+regex over lines, because of the eight continuation lines above.
+
+**6. The two traps in writing it.** The first is the one that the
+previous round's number exposes: **a block comment is a property of
+the file, not of the line**. Any per-line rule reads a continuation
+line as code. The second is the quote. A string literal is captured
+with its quotes still attached at first, so `"builtin_lookup"` was not
+equal to `builtin_lookup`, and nine rows that name a whole literal
+were classified as fragments of a longer literal. The literal has to
+be returned with the quotes stripped, and it counts as a name only
+when the whole of it is an identifier -- which is also what makes the
+three `#include` rows fall out, since `wb_embed.h` is a filename
+inside a string, not an identifier.
+
+**7. What it costs, and what it does not.** The grade count moves from
+symbol 87 to symbol 68, and the 19 rows fall back to `picked up`,
+which moves 457 to 476. **The held count does not move at all**: 618
+before, 618 after. That is not a coincidence of this tree. The symbol
+channel only runs on rows that are already held -- it upgrades a
+`picked up` row -- so losing the upgrade can never lose the hold. What
+changed is not how many citations are anchored; it is what 19 of them
+claim about the anchor.
+
+Twelve of the 19 still name the owner as the holder, because the
+owner's line does carry the quoted text somewhere. The other seven now
+name a different file, and those seven are exactly the seven rows the
+coincidence count gained: 235 becomes 242. That increase is the report
+telling the truth. Six of the seven were being reported as held by the
+owner by the symbol channel itself, which is the one channel that
+always names the owner; with the grade gone, the span mechanism picks
+the holder, and the holder it picks is not the owner.
+
+**8. Why the coincidence pin did not move.** The count is compared
+against a base tree, and the base tree is read with the same rule. The
+base this pin uses reads 242 as well, so the delta stays at +0 while
+both sides grew by seven. This is the same argument §10.279 §6 made,
+and it is worth stating again because it is counter-intuitive: the pin
+does not measure "is this tree's coincidence count low", it measures
+"has this tree gained coincidences since the base", and a rule that
+changes both readings equally cannot change the difference.
+
+The other three pins are untouched, and the numbers behind them are
+worth recording because they look like they should have moved and
+have not: unanchored stays 563, because the symbol channel never
+contributed a hold that the span mechanism did not already have;
+explicit stays 185, because this rule is about evidence, not about
+which lines name a target; ambiguous stays 172, because the rows whose
+symbol was demoted are held by one file, not by two.
+
+**9. The controls.** Three new cells in `tools/check_line_refs.test.py`,
+each with its own fixture file, each citing line 4 of the fixture so
+the bystander named on the shared line 7 stays out of the way. They
+assert, in order: an identifier named only inside a comment on the
+cited line must **not** be graded `symbol`; an identifier named in the
+cited line's code must still be `symbol`; a whole string literal must
+be `symbol`. The three fixtures are a function definition, a
+registration with a literal, and a comment whose first line is on line
+3 and whose continuation is line 4, which is the shape that a per-line
+rule gets wrong.
+
+The negative control runs those cells against the previous commit's
+checker, in a detached clone so the tree is not disturbed. It fails on
+exactly one cell, the comment one:
+
+```
+check_line_refs.test.py: FAIL symbol/comment -- the cited line names
+'builtin_lookup' only inside a comment, and a comment is prose about
+the code, not the code: the grade must not be 'symbol'
+```
+
+The other two cells pass under the old checker as well, and that is
+the correct result: the old rule was too generous, not too strict, so
+the two shapes it already handled must keep passing.
+
+**10. What changed.** `tools/check_line_refs.py`: the C splitter, the
+per-file parts cache, and the symbol channel reading the cited line's
+parts instead of its raw text, plus the comments at each of those
+places recording the four shapes and the 19 rows. The comments
+previously carried a number from an intermediate probe -- "25 of the
+87" with 16 comment and 9 string-fragment -- and that number was also
+wrong: it came from a rule that kept fragments as evidence. All four
+comment blocks now say 19, and say the 16 / 3 split, so the code says
+what the round measured. `tools/check_line_refs.test.py`: three
+fixtures, three assertions, one cell. `docs/STATUS.md`: this section.
+No pin file was rewritten and no pin moved.
+
+**11. What this round does not settle.** Three things, in the order
+they are likely to be worth: 
+
+**The span mechanism still matches inside comments.** It is a
+different mechanism from the symbol channel -- it looks for the quoted
+text of the citing line anywhere on the cited line -- and it is not
+touched here. Seven of the 171 held rows whose owner is a C file still
+rest their evidence on a span that appears only inside a comment in
+the cited line: docs/BOARD.md line 149 (twice) and line 158, which
+name `Value` in src/vm/vm.h; docs/BOARD.md line 160, which names
+`kind` in src/runtime/runtime.c; and docs/BOARD.md line 283 (three
+times), which names `false` in src/runtime/runtime_posix.c. All seven
+are graded `picked up`, so no grade overclaims; the hold itself is
+what is thin.
+
+**`holding_kind` would have been the wrong tool**, which is why the
+round did not use the distinction §10.279 §9 suggested. It classifies
+a line by its shape -- a line beginning with `#`, `//`, `/*`, `*`,
+`--`, `;` or `<!--` is a comment -- and in C that is wrong for every
+preprocessor line. Six of the 68 surviving symbol rows are graded
+`comment` by that test while their identifier is in the code: two
+`#include` lines, three `#define` lines, and one line where the
+identifier is a struct member read after an inline comment. A shape
+test is a guess about a language; this round needed the language.
+
+**The symbol channel only ever reaches rows graded `picked up`.** 476
+rows are `picked up` on this tree, and the channel looks at those and
+nothing else. So the question "does this reference name a symbol in
+the cited line" is never asked about the 65 `borrowed` rows or the 9
+`own` rows, even when the owner is a C file. The 19 rows this round
+fixed were the ones where the channel ran and answered incorrectly;
+nothing here asks whether it should have run more often.
