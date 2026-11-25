@@ -19733,3 +19733,199 @@ refused, so what is left is not a rule to write but a count to carry:
 the ambiguity count is the measure for it, and the coincidence count
 is the measure for the ones whose owner the ruler resolves to a file
 that does not hold the line.
+
+## §10.279 — the count and the report were two different questions
+
+**1. Where this round starts.**
+
+The coincidence count has been in the report since §10.272, and it
+counts the references that are held by a file that is not the owner:
+the cited line was never checked, because the evidence came from
+some other file that happened to carry the same quoted text on a line
+with the same number. On the tree this round starts from it read 233
+of the 618 held references, and it had a pin: against a base of its
+own the delta had to stay at zero.
+
+The count was never wrong about what it counted. What it counted was
+not what the report said.
+
+**2. The two questions.**
+
+The report names one holder per held reference. It prints it on
+every `HOLD` line, and it is the only thing a reader of the report
+can see about where the evidence came from.
+
+The count asked a different question. It asked whether the owner was
+among **all** the files whose line N carries a matching span. Those
+are two different facts, and the checker could contradict itself.
+
+It did, on 47 of the 618 held rows. Two shapes:
+
+**Eleven rows were reported as held by the owner and counted as
+coincidences.** These are `symbol` rows. The symbol channel names the
+owner as the holder by construction -- the evidence is a shared
+identifier between the citing line and the owner's line N -- so every
+one of them was printed as "held by the owner" and counted as a
+coincidence at the same time. The report said the cited line had been
+checked. The count said it had not.
+
+**Thirty-six rows were reported as held by another file and not
+counted as coincidences.** Here the owner did hold the span, but the
+report named a different file. The holder is chosen to support the
+grade being reported, and several files support it; the first one
+that did was named. So the report pointed at a bystander while the
+count said the citation was anchored.
+
+Counting the disagreements needs care: the 618 held rows have 552
+distinct keys and 53 keys have more than one row, so a comparison
+that uses a set hides the multiplicity and under-counts.
+
+**3. What was measured before anything was changed.**
+
+Two repairs were available, and they were measured separately.
+
+The first asks the count the question the report answers -- is the
+file the report names the owner -- and changes nothing else. It reads
+258 coincidences on this tree, against 233 before: 25 rows the report
+already said were held by another file stop being counted as
+coincidences, because the count had been asking about all the
+holders. The count and the report would agree, and the count would go
+up by 25, and the pin would have to move by 25.
+
+The second changes the report as well: when the owner's own line N
+carries the span, the report names the owner. The owner's line N is
+the only line that can say anything about the number, so a report
+that names a bystander is a report about the wrong line.
+
+Measured on the tree this round starts from, the second repair makes
+the report name the owner on 20 rows. On those rows the owner's line N
+was carrying the evidence all along and the report was pointing
+somewhere else.
+
+**4. The repair, and the choice inside it.**
+
+The holder now prefers the owner, but only when the owner's span
+supports the grade that is being reported. The coincidence count then
+asks whether the file the report names is the owner, so the two
+cannot disagree: they are the same fact read twice.
+
+The condition matters. Preferring the owner unconditionally reads 222
+coincidences -- a smaller number, which looks better -- but it moves
+11 rows between grades: nine from borrowed down to picked up, one from
+borrowed up to symbol, one from picked up up to symbol. A grade is a
+claim about what the evidence is, and it must not change because the
+report started looking somewhere else. So the owner is preferred only
+where preferring it changes nothing but the name.
+
+A third option was measured and rejected: rewriting the coincidence
+count to "the owner did not hold it", which would be a strict reading
+of "the cited line was never checked". It reads 812 against 563
+unanchored on the current tree and 759 against 568 on the base tree,
+so it would move the denominator of the unanchored pin and require
+the pin to be re-argued from scratch. The debt it would measure is
+already measured by the coincidence count.
+
+**5. What the numbers are now.**
+
+On the tree this round starts from, measured with the old rule and
+with the new one:
+
+| | old rule | new rule |
+|---|---|---|
+| held references | 618 | 618 |
+| reported as held by another file | 229 | 209 |
+| counted as coincidences | 233 | 235 |
+| the two disagreeing | 47 | 0 |
+
+The coincidence count rises by two, and that is not new debt. It is
+the 11 rows the report used to contradict itself about, less the 9
+rows the repair corrected. No row became newly coincidental: a row is
+coincidental now exactly when the report says it is held by a file
+that is not the owner.
+
+The grade distribution does not move: 9 own, 65 borrowed, 87 symbol,
+457 picked up. The number of held references does not move. The
+unanchored count does not move: 563.
+
+**6. The pin did not have to be re-based, and that is the point.**
+
+The coincidence pin measures a delta against a base of its own,
+fca60a25, because the count against the older base left 118
+coincidences of headroom, and headroom nobody has to argue for is the
+thing a ratchet exists to refuse.
+
+The new rule reads 235 on this tree and 235 on the base, so the delta
+is still zero and the ceiling is still zero. It needed no re-basing,
+and not because the rule is careful, but because a delta is measured
+against a **tree**, not against a number: both sides are re-read
+whenever the rule changes. A rule change that moved nothing is
+invisible to the pin, and a rule change that moved the tree shows up
+as a delta. That is what a pin should do, and it is the reason the
+ratchet is written against a commit rather than against a count.
+
+Against the older base the new rule reads 183, where the old rule
+read 187.
+
+**7. The control.**
+
+The new cell is in `tools/check_line_refs.test.py`: the report names
+the owner, and the coincidence count agrees with it. Its fixture puts
+two files on line 7 of the citation, one of them the owner and one of
+them a bystander, and both carrying the same quoted name, so both hold
+the reference and both support the grade.
+
+Three things are asserted, because any one of them alone would let the
+defect back in: the report names the owner; the count and the report
+agree; and when the owner's quoted text is taken away, the reference
+is counted as a coincidence again and the report does not name the
+owner.
+
+The negative control is the old checker against the new test file:
+it fails on exactly the two assertions that describe the defect --
+
+    FAIL report/owner -- the report named the holder 'tools/gate.sh'
+      but the owner is 'CMakeLists.txt', and the owner's own line is the
+      one that carries the evidence
+    FAIL report/count -- the report names a holder that is not the owner,
+      and the coincidence count says not coincidental: the two do not agree
+
+-- and passes the rest.
+
+**8. What changed.**
+
+`tools/check_line_refs.py`: the holder now prefers the owner when the
+owner's span supports the reported grade; the coincidence count asks
+whether the **reported** holder is the owner; the separate
+`held_elsewhere` count point was removed, because it was the same
+question asked in a second place and the two could drift apart. The
+comments at both places, and the comment on the coincidence pin,
+record the numbers and the reasoning.
+
+`tools/check_line_refs.test.py`: the cell and its fixture.
+
+`docs/STATUS.md`: this section. No pin file was rewritten and no pin
+moved.
+
+**9. What this round does not settle.**
+
+**The coincidence count is still a count, not a rule.** It says how
+many cited lines were never checked. It does not say what to do about
+them, and 231 of the 235 name a line the owner file actually has, so
+each one could be turned into a real anchor by a correction on either
+side of the citation. A pin that only forbids the count from growing
+does not pay any of them.
+
+**The owner rule itself is untouched.** This round made the report
+agree with the count; it did not make the count zero. The owner is
+still "the last name on the line, at or before the number", and that
+rule is still wrong for a documented share of the references -- §10.274
+measured that share, and §10.277 and §10.278 removed the shapes where
+it could not even see the file.
+
+**The symbol grade does not check what it says it checks.** The
+symbol channel reports that the citing line and the owner's line N
+share an identifier, and on 8 of its 87 rows the identifier appears in
+the cited line only inside a comment. The channel has a `holding_kind`
+that separates comment from code, and the grade does not use it. That
+is the next thing on this ground, and it was measured while this round
+was being written.
