@@ -1184,7 +1184,132 @@ def is_code_owner(path: str | None) -> bool:
     return path.endswith(CODE_OWNER_SUFFIXES)
 
 
-def symbol_evidence(citing_line: str, owner_line: str) -> list[str]:
+# --- the code of a C line, apart from its comments and its strings ---------
+#
+# A line of C carries three different kinds of text and the difference
+# matters, because a citation is a claim about CODE.  A comment is prose
+# ABOUT the code; a string literal is a name the code passes around; the rest
+# is the code.
+#
+# So the symbol channel has to be able to tell them apart, and it cannot do it
+# with a regex on one line: a `/* ... */` block CONTINUES across lines, and
+# the continuation line begins with ` * `.  A line that starts with ` * ` is
+# not a line of code that happens to begin with a multiplication -- it is the
+# second line of a comment.  A per-line strip that treats `*` as code reads
+# the comment's words as names, and the symbol channel then reports a
+# citation as evidence-bearing when the cited line never mentioned the
+# symbol in anything but a comment about it.
+#
+# The splitter below walks the file once, carrying the comment state and the
+# string state from line to line, and says for every line what is code, what
+# is a string literal, and what is a comment.
+#
+# Measured on ced9059b: the `symbol` grade reported 87 rows, and 19 of them
+# named an identifier the cited line carries only in a comment (16) or only
+# as a fragment of a longer string (3).  Neither is a name in the cited
+# line.  A grade that says "these two lines talk about the same symbol" was
+# reporting evidence it had not found.  The other 68 rows name an identifier
+# in the line's code (62) or as a whole string literal (6), which is a name
+# in C, and all 68 keep the same symbol under the rule below.
+
+C_BLOCK_START = "/*"
+C_BLOCK_END = "*/"
+C_LINE_COMMENT = "//"
+
+
+def split_c_line(
+    line: str, in_block: bool, in_string: str | None
+) -> tuple[list[str], list[str], list[str], bool, str | None]:
+    """Split one C line into (code, strings, comments).
+
+    `in_block` and `in_string` are the state carried IN from the previous
+    line, and the two returned booleans/values are the state carried OUT.
+    A string literal does not continue across a newline in C, so the string
+    state never leaves the line; a block comment does, so the block state
+    does.
+
+    The strings returned are the COMPLETE literals, without their quotes: a
+    name in C is written as a whole literal, and a fragment of a longer
+    literal is a fragment, not a name.
+    """
+    code: list[str] = []
+    strings: list[str] = []
+    comments: list[str] = []
+    literal: list[str] = []
+    i, n = 0, len(line)
+    while i < n:
+        ch = line[i]
+        if in_block:
+            if ch == "*" and i + 1 < n and line[i + 1] == "/":
+                comments.append("*/")
+                in_block = False
+                i += 2
+                continue
+            comments.append(ch)
+            i += 1
+            continue
+        if in_string:
+            if ch == "\\" and i + 1 < n:
+                literal.append(line[i + 1])
+                i += 2
+                continue
+            if ch == in_string:
+                in_string = None
+                strings.append("".join(literal))
+                literal = []
+                i += 1
+                continue
+            literal.append(ch)
+            i += 1
+            continue
+        if ch == '"' or ch == "'":
+            in_string = ch
+            literal = []
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and line[i + 1] == "*":
+            comments.append("/*")
+            in_block = True
+            i += 2
+            continue
+        if ch == "/" and i + 1 < n and line[i + 1] == "/":
+            comments.append(line[i:])
+            break
+        code.append(ch)
+        i += 1
+    return code, strings, comments, in_block, in_string
+
+
+def c_line_parts(text: str) -> list[tuple[set[str], set[str], set[str]]]:
+    """For each line of a C file: (identifiers, string literals, comments).
+
+    The identifiers are the ones in the CODE of the line, the string
+    literals are the WHOLE literals (a builtin name in C is written as the
+    whole literal, and the whole literal is the name), and the comment
+    identifiers are the ones in the comment text.
+    """
+    out: list[tuple[set[str], set[str], set[str]]] = []
+    in_block = False
+    in_string: str | None = None
+    for line in text.splitlines():
+        code, strings, comments, in_block, in_string = split_c_line(
+            line, in_block, in_string
+        )
+        code_ids = {m.group(0) for m in IDENTIFIER.finditer("".join(code))}
+        literals = set()
+        for lit in strings:
+            if IDENTIFIER.fullmatch(lit):
+                literals.add(lit)
+        comment_ids = {
+            m.group(0) for m in IDENTIFIER.finditer("".join(comments))
+        }
+        out.append((code_ids, literals, comment_ids))
+    return out
+
+
+def symbol_evidence(
+    citing_line: str, owner_parts: tuple[set[str], set[str], set[str]]
+) -> list[str]:
     """Identifiers the two lines share, minus the ones that prove nothing.
 
     This is the evidence channel for a code owner.  A span cannot reach a
@@ -1198,10 +1323,26 @@ def symbol_evidence(citing_line: str, owner_line: str) -> list[str]:
     The generic words are excluded because they are the vocabulary of every
     language at once.  Sharing `name` says nothing; sharing
     `builtin_lookup` says something.
+
+    AND THE IDENTIFIER HAS TO BE A NAME IN THE CITED LINE.  `owner_parts` is
+    the cited line already split into its code, its string literals and its
+    comments, because a comment is prose ABOUT the code and a string
+    literal is a name the code carries -- and neither is the code.  A
+    citation whose cited line mentions the symbol only inside a comment is
+    not evidence that the two lines talk about the same symbol; it is
+    evidence that the comment mentions it.
+
+    The rule that was here before took the identifiers of the cited line
+    wherever they were, so a comment counted.  Measured on ced9059b: 19 of
+    the 87 `symbol` rows named an identifier the cited line carries only in
+    a comment (16) or only as a fragment of a longer string (3) -- and three
+    of those are not identifiers of the owner's file at all: a header name
+    out of `#include "wb_embed.h"`, one out of `#include "compiler.h"`, and
+    one out of a string literal that holds a whole C function signature.
     """
     mine = {m.group(0) for m in IDENTIFIER.finditer(citing_line)}
-    theirs = {m.group(0) for m in IDENTIFIER.finditer(owner_line)}
-    shared = mine & theirs
+    code_ids, literals, _comment_ids = owner_parts
+    shared = mine & (code_ids | literals)
     return sorted(
         s for s in shared if s.lower() not in GENERIC_WORDS
     )
@@ -1274,6 +1415,20 @@ def scan() -> dict:
     def _lines(rel: str) -> list[str] | None:
         owners.add(rel)
         return lines_of(rel)
+
+    # The split of a code owner's file into code, strings and comments, one
+    # entry per line.  Cached per file: the split walks the whole file, and a
+    # document can cite the same source file many times.
+    _code_parts_cache: dict[str, list] = {}
+
+    def _code_parts(rel: str) -> list | None:
+        if rel not in _code_parts_cache:
+            text = TREE.text(rel)
+            if text is None or not TREE.tracked(rel):
+                _code_parts_cache[rel] = None
+            else:
+                _code_parts_cache[rel] = c_line_parts(text)
+        return _code_parts_cache[rel]
 
     for rel in docs_markdown():
         text = TREE.text(rel)
@@ -1535,14 +1690,26 @@ def scan() -> dict:
                         # that evidence, and it is a fourth grade rather than
                         # a redefinition of `own`: it says the two lines talk
                         # about the same symbol, which `own` does not say.
+                        #
+                        # The identifier has to be a NAME in the cited line --
+                        # in its code, or a whole string literal, which is how
+                        # C spells a builtin name.  A comment is prose about
+                        # the code, and a fragment of a longer string is a
+                        # fragment.  The rule that was here before took the
+                        # identifiers of the cited line wherever they were,
+                        # so 19 of the 87 rows it produced on ced9059b were
+                        # evidence the cited line never gave: 16 named a word
+                        # that is only in a comment, 3 named a fragment of a
+                        # longer string (two header names out of `#include`,
+                        # one out of a literal holding a C signature).
                         if grade == "picked up" and is_code_owner(owner):
-                            _owner_lines = _lines(owner)
+                            _owner_parts = _code_parts(owner)
                             if (
-                                _owner_lines
-                                and 1 <= number <= len(_owner_lines)
+                                _owner_parts
+                                and 1 <= number <= len(_owner_parts)
                             ):
                                 _syms = symbol_evidence(
-                                    line, _owner_lines[number - 1]
+                                    line, _owner_parts[number - 1]
                                 )
                                 if _syms:
                                     grade = "symbol"

@@ -182,6 +182,90 @@ CODE_OWNER_TEXT = "\n".join(
     ]
 ) + "\n"
 
+# --- cell: a symbol that is only in a COMMENT is not a symbol --------------
+#
+# The cited line of the C file names `builtin_lookup` -- but inside a comment
+# that says what the function does.  The comment is prose ABOUT the code, and
+# the code of that line does not name the symbol at all.
+#
+# The rule that was here before took the identifiers of the cited line
+# wherever they were, so this row was graded `symbol` -- a claim that the
+# two lines talk about the same symbol -- on the strength of a word in a
+# comment.  Measured on ced9059b: 25 of the 87 `symbol` rows were like this,
+# and nine of the 25 named an identifier the owner's file does not have at
+# all (words in a comment, or fragments of a path).
+#
+# The comment is a BLOCK comment that SPANS LINES, because that is the shape
+# a per-line strip cannot see: the continuation line begins with ` * `, and a
+# line that begins with ` * ` is not code that begins with a multiplication.
+# It is the second line of a comment.
+#
+# All three fixtures cite line 4, because line 7 of the bystander carries
+# `tools/gate.sh` and a second holder would change the grade before the
+# symbol channel is ever reached.
+SYM_COMMENT_DOC = "docs/fix/symbol-comment.md"
+SYM_COMMENT_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`tools/gate.sh` and `src/fix/commented.c` both name `builtin_lookup` "
+    "at `:4`.\n"
+)
+SYM_COMMENT_OWNER = "src/fix/commented.c"
+SYM_COMMENT_OWNER_TEXT = "\n".join(
+    [
+        "/* fixture */",
+        "#include <stddef.h>",
+        "/* One name, one handler.",
+        " * builtin_lookup returns the FIRST slot on the list whose name "
+        "matches.",
+        " */",
+        "int slot_of(VM *vm, const char *name) {",
+        "    return 0;",
+        "}",
+    ]
+) + "\n"
+
+# The same symbol in the CODE of the cited line: the evidence is real and
+# the grade must be `symbol` again.
+SYM_CODE_DOC = "docs/fix/symbol-code.md"
+SYM_CODE_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`tools/gate.sh` and `src/fix/coded.c` both name `builtin_lookup` "
+    "at `:4`.\n"
+)
+SYM_CODE_OWNER = "src/fix/coded.c"
+SYM_CODE_OWNER_TEXT = "\n".join(
+    [
+        "/* fixture */",
+        "#include <stddef.h>",
+        "int slot_of(VM *vm, const char *name) {",
+        "int builtin_lookup(VM *vm, const char *name) {",
+        "    return slot_of(vm, name);",
+        "}",
+    ]
+) + "\n"
+
+# The same symbol as a WHOLE string literal -- which is how C spells a
+# builtin name -- and the grade must be `symbol` too.
+SYM_LITERAL_DOC = "docs/fix/symbol-literal.md"
+SYM_LITERAL_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`tools/gate.sh` and `src/fix/literal.c` both name `builtin_lookup` "
+    "at `:4`.\n"
+)
+SYM_LITERAL_OWNER = "src/fix/literal.c"
+SYM_LITERAL_OWNER_TEXT = "\n".join(
+    [
+        "/* fixture */",
+        "#include <stddef.h>",
+        "int slot_of(VM *vm, const char *name) {",
+        '    vm_register_builtin(vm, "builtin_lookup", slot_of);',
+        "}",
+    ]
+) + "\n"
+
 # --- cell: a coincidence is a hold by a file that is not the owner --------
 #
 # The citing line names TWO files, and the number belongs to the second one
@@ -503,6 +587,84 @@ def check_symbol_grade() -> int:
         failures += 1
         print(f"check_line_refs.test.py: FAIL symbol -- the reported holder "
               f"{row[5][0]} is not the owner {row[3]}")
+    return failures
+
+
+def check_symbol_must_be_a_name() -> int:
+    """A `symbol` grade needs the symbol to be a NAME in the cited line.
+
+    The cited line of a C file carries three kinds of text and the difference
+    matters, because the grade says "these two lines talk about the same
+    symbol":
+
+      * the CODE of the line -- the symbol is a name the code uses;
+      * a COMMENT -- prose about the code, and the symbol is a word in it;
+      * a string LITERAL -- a name the code passes around, but only when the
+        literal IS the name.
+
+    The rule that was here before took the identifiers of the cited line
+    wherever they were, so a word in a comment was evidence enough.  Measured
+    on ced9059b: 25 of the 87 `symbol` rows named an identifier the cited
+    line carries only in a comment (16) or only as a fragment of a longer
+    string (9), and nine of the 25 were not identifiers of the owner's file
+    at all.
+
+    Three fixtures, because the rule has to be right in all three shapes:
+    a symbol in a comment (not a symbol), a symbol in the code (a symbol),
+    and a symbol as a whole string literal (a symbol -- that is how C spells
+    a builtin name).
+    """
+    failures = 0
+    # 1. the symbol is only in a COMMENT -> not the `symbol` grade.
+    files = {
+        SYM_COMMENT_DOC: SYM_COMMENT_DOC_TEXT,
+        SYM_COMMENT_OWNER: SYM_COMMENT_OWNER_TEXT,
+    }
+    r = scan_with(files)
+    rows = r["held_rows"]
+    if len(rows) != 1:
+        print(f"check_line_refs.test.py: SETUP -- the comment fixture "
+              f"produced {len(rows)} held references, expected 1")
+        return 2
+    if rows[0][4] == "symbol":
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL symbol/comment -- the cited "
+              f"line names {rows[0][5][1]!r} only inside a comment, and a "
+              f"comment is prose about the code, not the code: the grade "
+              f"must not be 'symbol'")
+    # 2. the symbol is in the CODE -> the `symbol` grade.
+    files = {
+        SYM_CODE_DOC: SYM_CODE_DOC_TEXT,
+        SYM_CODE_OWNER: SYM_CODE_OWNER_TEXT,
+    }
+    r = scan_with(files)
+    rows = r["held_rows"]
+    if len(rows) != 1:
+        print(f"check_line_refs.test.py: SETUP -- the code fixture produced "
+              f"{len(rows)} held references, expected 1")
+        return failures + 2
+    if rows[0][4] != "symbol":
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL symbol/code -- the cited line "
+              f"names the symbol in its code, so the grade must be 'symbol', "
+              f"got {rows[0][4]!r}")
+    # 3. the symbol is a WHOLE string literal -> the `symbol` grade.
+    files = {
+        SYM_LITERAL_DOC: SYM_LITERAL_DOC_TEXT,
+        SYM_LITERAL_OWNER: SYM_LITERAL_OWNER_TEXT,
+    }
+    r = scan_with(files)
+    rows = r["held_rows"]
+    if len(rows) != 1:
+        print(f"check_line_refs.test.py: SETUP -- the literal fixture "
+              f"produced {len(rows)} held references, expected 1")
+        return failures + 2
+    if rows[0][4] != "symbol":
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL symbol/literal -- the cited "
+              f"line names the symbol as a whole string literal, which is "
+              f"how C spells a builtin name, so the grade must be 'symbol', "
+              f"got {rows[0][4]!r}")
     return failures
 
 
@@ -1296,6 +1458,7 @@ def main() -> int:
     failures += check_span_rule()
     failures += check_own_needs_the_owner()
     failures += check_symbol_grade()
+    failures += check_symbol_must_be_a_name()
     failures += check_coincidence_is_counted()
     failures += check_report_names_the_owner()
     failures += check_ambiguity_is_counted()
@@ -1313,7 +1476,9 @@ def main() -> int:
     print("check_line_refs.test.py: OK -- every reported holder supports its "
           "reported grade, in both orders; the code spans are read the way "
           "Markdown reads them; `own` is held by the owner; a code owner "
-          "can be held by a symbol; a hold by a file that is not the owner is "
+          "can be held by a symbol; a symbol has to be a name in the cited "
+          "line, not a word in a comment; a hold by a file that is not the "
+          "owner is "
           "counted as a coincidence; the report names the owner and the "
           "coincidence count agrees with it; a reference two of the named "
           "files can hold is counted as ambiguous; a document-relative link "
