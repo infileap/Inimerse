@@ -565,6 +565,23 @@ EXP_LINE_REFS_OFF_TARGET_MAX = int(
 # correction on either side of the citation turns the coincidence into a real
 # anchor.
 #
+# THE RULE WAS REWRITTEN IN §10.279, and this pin reads the NEW rule.  The
+# old rule asked whether the owner was among ALL the holders, while the
+# report named ONE -- two different facts, and 47 of the 618 held rows on
+# 034b5115 contradicted themselves because of it.  The rule now asks whether
+# the file the report NAMES is the owner, and the report prefers the owner
+# when the owner holds the span (the owner's own line N is the only line that
+# can say anything about the number).
+#
+# The new rule reads 235 on this tree and 235 on the base below, so the delta
+# is still +0 and the ceiling is still +0 -- the pin did not have to be
+# re-based, because the base tree is read with the same rule as the working
+# tree.  That is the whole reason a delta is measured against a tree and not
+# against a number: both sides are re-read whenever the rule changes, so a
+# rule change shows up as a delta only if it moved the tree, and a rule
+# change that moved NOTHING is invisible to the pin, which is what a pin
+# should be.
+
 # WHY THIS PIN HAS ITS OWN BASE.  The other two deltas are measured against
 # EXP_LINE_REFS_BASE, which is 2430 commits back.  Against that base this
 # reading is 354, and this tree reads 236 -- a delta of -118, and a ceiling
@@ -1383,8 +1400,14 @@ def scan() -> dict:
                         )
                     elif hits:
                         held += 1
-                        if owner not in [token for token, _s, _m in hits]:
-                            held_elsewhere += 1
+                        # `held_elsewhere` is the same fact the coincidence
+                        # count measures, and it is counted AFTER the holder
+                        # is chosen (below), so the two agree by
+                        # construction.  It used to ask whether the owner was
+                        # among `hits` -- every file whose line N carries a
+                        # span -- which is a different question from the one
+                        # the report answers (see the note at the coincidence
+                        # rule).
                         # Three grades of "held", because they are not the same
                         # evidence, and only the first one is what a reader
                         # assumes when the report says a number is held:
@@ -1441,6 +1464,47 @@ def scan() -> dict:
                         else:
                             holder_pair = hits[0]
                             grade = _grade([holder_pair[1]])
+                        # THE OWNER FIRST.  The holder is chosen from the
+                        # files whose line N carries a matching span, and the
+                        # first of them is whatever the citing line mentions
+                        # first -- which is often not the file the number
+                        # points at.  The owner's own line N is the ONE line
+                        # that can say something about the number, so when the
+                        # owner holds it, the report names the owner.
+                        #
+                        # It used to name the owner only by luck of the order,
+                        # and the luck was not the report's: the coincidence
+                        # count asked whether the owner was among the holders
+                        # (ALL of them) while the report named ONE, so the two
+                        # could disagree, and 47 of the 618 held rows did.
+                        # Eleven were `symbol` rows -- the symbol channel
+                        # names the owner as the holder by construction, so
+                        # each of them was reported as "held by the owner" and
+                        # counted as a coincidence at the same time.
+                        #
+                        # Measured on 034b5115: 20 rows name the owner after
+                        # this change, and the count of rows the report says
+                        # are held by another file falls from 229 to 209 --
+                        # no row is newly coincidental, because in those 20
+                        # rows the owner's line N was carrying the evidence
+                        # all along and the report was pointing at a
+                        # bystander.
+                        #
+                        # The owner is preferred only when its span supports
+                        # the grade that is being reported.  Preferring it
+                        # unconditionally would move 11 rows between grades
+                        # (borrowed down to picked up, and two up to symbol),
+                        # and a grade is a claim about the evidence, so it
+                        # must not change because the report started looking
+                        # somewhere else.
+                        _own_hits = [h for h in hits if h[0] == owner]
+                        if _own_hits:
+                            _own_supporting = [
+                                h for h in _own_hits
+                                if _grade([h[1]]) == grade
+                            ]
+                            if _own_supporting:
+                                holder_pair = _own_supporting[0]
                         # `own` says the owner's OWN name is the evidence.  The
                         # name is on the cited line of the file the number
                         # points into -- not on the same-numbered line of some
@@ -1512,18 +1576,54 @@ def scan() -> dict:
                         # and reported it -- in a sentence nobody had to act
                         # on.  A number in a report is not a rule.
                         #
-                        # Measured on 88b898fd: 236 of the 629 held
-                        # references are held this way, and the count has been
-                        # flat in a 232-239 band across the last 340 commits
-                        # of this branch -- so it is a standing debt, not a
-                        # growing one, and it is repayable: 234 of the 236
-                        # name a line the owner file actually has, so a
-                        # correction on either side can turn the coincidence
-                        # into a real anchor.
-                        if owner is None or owner not in [
-                            token for token, _s, _m in hits
-                        ]:
+                        # WHICH HOLDER.  The rule used to ask whether the
+                        # owner is among `hits` -- every file whose line N
+                        # carries a matching span -- while the report names
+                        # exactly ONE holder.  Those are two different facts,
+                        # and the checker could contradict itself: a row the
+                        # report says is held by the owner was still counted
+                        # as a coincidence, and a row the report says is held
+                        # by another file was not.  Measured on 034b5115: 47 of
+                        # the 618 held rows disagreed with themselves.  Eleven
+                        # were `symbol` rows -- the symbol channel names the
+                        # OWNER as the holder by construction, so every one of
+                        # them was reported as "held by the owner" and counted
+                        # as a coincidence at the same time.  Thirty-six were
+                        # the other way: the owner held the span but the
+                        # REPORT named a different holder, because the holder
+                        # is chosen to support the grade and several files
+                        # support it.
+                        #
+                        # The rule now asks the question the report
+                        # answers: is the file the report NAMES as the holder
+                        # the owner?  The two can no longer disagree, because
+                        # they are the same fact read twice.
+                        #
+                        # And the holder is chosen to make that question
+                        # worth asking: the owner's own line N is the ONE
+                        # line that can say anything about the number, so
+                        # when the owner holds the span, the report names the
+                        # owner (see the holder choice above).
+                        #
+                        # Measured on 034b5115: 235 of the 618 held
+                        # references are coincidental this way, and 209 of them
+                        # are reported as being held by another file -- the
+                        # two numbers are the same set, read once as a count
+                        # and once as a report.  Before this change they were
+                        # 233 and 229, and they did not agree: 198 rows were
+                        # reported as held by another file and counted as
+                        # coincidences, and 11 rows were reported as held by
+                        # the owner and counted as coincidences too.
+                        #
+                        # The count has been flat in a 232-239 band across the
+                        # last 340 commits of this branch, so it is a standing
+                        # debt rather than a growing one, and it is repayable:
+                        # 231 of the 235 name a line the owner file actually
+                        # has, so a correction on either side can turn the
+                        # coincidence into a real anchor.
+                        if holder_file != owner:
                             coincident.append((rel, lineno, number, owner))
+                            held_elsewhere += 1
                         _holding_lines = _lines(holder_file)
                         _holding_kind = (
                             holding_kind(_holding_lines[matched - 1])

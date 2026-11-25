@@ -564,6 +564,143 @@ def check_coincidence_is_counted() -> int:
     return failures
 
 
+# --- cell: the report names the owner, and the count agrees ---------------
+#
+# The citing line names two files: a bystander first, and the owner of the
+# number last, by the position rule.  BOTH carry a quoted TARGET name on line
+# 7, so both hold the reference and both support the grade `borrowed`.
+#
+# The old report named the FIRST holder, which was the bystander -- and the
+# coincidence count asked whether the owner was among ALL the holders, which
+# it was.  So the report said "held by the bystander" and the count said
+# "not a coincidence", while the reader of the report had been told the
+# cited line was never checked.  Or the other way round: the count said
+# "coincidence" for a row the report said was held by the owner.
+#
+# The two facts have to be the SAME fact, read twice: the report names the
+# holder, and the count asks whether THAT holder is the owner.  And the
+# report must name the owner whenever the owner holds the span, because the
+# owner's own line N is the only line that can say anything about the number.
+REPORT_DOC = "docs/fix/report-holder.md"
+REPORT_OWNER = "CMakeLists.txt"
+REPORT_BYSTANDER = "tools/gate.sh"
+REPORT_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`tools/gate.sh` and `CMakeLists.txt` are named, and the number is `:7`.\n"
+)
+# Line 7 of the owner carries the quoted TARGET name, so the owner holds it.
+REPORT_OWNER_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "one",
+        "two",
+        "three",
+        "four",
+        'the file `tools/gate.sh` is named here',
+    ]
+) + "\n"
+# Line 7 of the bystander carries the SAME quoted TARGET name, so the
+# bystander holds it too, and would be named first under the old rule.
+REPORT_BYSTANDER_TEXT = "\n".join(
+    [
+        "#!/bin/bash",
+        "# fixture",
+        "",
+        "echo one",
+        "echo two",
+        "echo three",
+        'echo "tools/gate.sh"',
+    ]
+) + "\n"
+# The owner with nothing quoted on line 7, so it cannot hold the reference.
+REPORT_OWNER_PLAIN_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "one",
+        "two",
+        "three",
+        "four",
+        "nothing is quoted on this line",
+    ]
+) + "\n"
+
+
+def check_report_names_the_owner() -> int:
+    """The report names the owner, and the coincidence count agrees with it.
+
+    Three facts, because any one of them alone would let the defect back in:
+
+      1  the report NAMES THE OWNER when the owner's own line N carries the
+         span -- the owner's line N is the only line that can say anything
+         about the number, so a report that names a bystander is a report
+         about the wrong line;
+      2  the coincidence count is about THE REPORTED HOLDER, so the report
+         and the count cannot contradict each other;
+      3  a reference the owner does NOT hold is still a coincidence, and is
+         still reported as held by the other file.
+    """
+    failures = 0
+    files = {
+        REPORT_DOC: REPORT_DOC_TEXT,
+        REPORT_OWNER: REPORT_OWNER_TEXT,
+        REPORT_BYSTANDER: REPORT_BYSTANDER_TEXT,
+    }
+    r = scan_with(files)
+    rows = r["held_rows"]
+    if len(rows) != 1:
+        print(f"check_line_refs.test.py: SETUP -- the report-holder fixture "
+              f"produced {len(rows)} held references, expected 1")
+        return 2
+    row = rows[0]
+    _rel, _lineno, _number, owner, _grade, holder = row
+    # 1. the report names the owner
+    if holder[0] != owner:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL report/owner -- the report named "
+              f"the holder {holder[0]!r} but the owner is {owner!r}, and the "
+              f"owner's own line is the one that carries the evidence")
+    # 2. the count and the report are the same fact
+    coincident = r.get("coincident")
+    if coincident is None:
+        failures += 1
+        print("check_line_refs.test.py: FAIL report/count -- the report does "
+              "not count coincidental holds at all")
+        return failures
+    reported_as_elsewhere = holder[0] != owner
+    counted = len(coincident) == 1
+    if reported_as_elsewhere != counted:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL report/count -- the report "
+              f"names a holder that is {'not' if reported_as_elsewhere else ''}"
+              f" the owner, and the coincidence count says "
+              f"{'coincidental' if counted else 'not coincidental'}: the two "
+              f"do not agree")
+    # 3. take the owner away: the reference is then held by the bystander
+    #    alone, and it must be counted as a coincidence again.
+    files[REPORT_OWNER] = REPORT_OWNER_PLAIN_TEXT
+    r2 = scan_with(files)
+    rows2 = r2["held_rows"]
+    if len(rows2) != 1:
+        print(f"check_line_refs.test.py: SETUP -- the report-holder fixture "
+              f"without the owner's span produced {len(rows2)} held "
+              f"references, expected 1")
+        return failures + 2
+    if rows2[0][5][0] == owner:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL report/count -- the report named "
+              f"the owner {owner!r} although the owner's line carries no "
+              f"quoted text at all")
+    if len(r2.get("coincident") or []) != 1:
+        failures += 1
+        print(f"check_line_refs.test.py: FAIL report/count -- a reference "
+              f"held only by a file that is not the owner was not counted as "
+              f"a coincidence: {r2.get('coincident')!r}")
+    return failures
+
+
 def check_ambiguity_is_counted() -> int:
     """A reference two files can hold is ambiguous, and counted.
 
@@ -1160,6 +1297,7 @@ def main() -> int:
     failures += check_own_needs_the_owner()
     failures += check_symbol_grade()
     failures += check_coincidence_is_counted()
+    failures += check_report_names_the_owner()
     failures += check_ambiguity_is_counted()
     failures += check_relative_link()
     failures += check_citation_address()
@@ -1176,10 +1314,11 @@ def main() -> int:
           "reported grade, in both orders; the code spans are read the way "
           "Markdown reads them; `own` is held by the owner; a code owner "
           "can be held by a symbol; a hold by a file that is not the owner is "
-          "counted as a coincidence; a reference two of the named files can "
-          "hold is counted as ambiguous; a document-relative link is a "
-          "mention; a citation has an address and an identity and they are "
-          "not the same; the two sides of the citation count compare the "
+          "counted as a coincidence; the report names the owner and the "
+          "coincidence count agrees with it; a reference two of the named "
+          "files can hold is counted as ambiguous; a document-relative link "
+          "is a mention; a citation has an address and an identity and they "
+          "are not the same; the two sides of the citation count compare the "
           "same thing; a path that begins with a dot is a mention; a unique "
           "basename against a number is a mention; a basename the tree "
           "cannot resolve names nothing; a span is a word in the cited "
