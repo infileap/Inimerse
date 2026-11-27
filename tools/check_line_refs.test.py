@@ -1469,6 +1469,13 @@ def main() -> int:
     failures += check_adjacent_basename()
     failures += check_basename_ambiguity()
     failures += check_word_boundary()
+    failures += check_writing_forms()
+    failures += check_out_of_range()
+    failures += check_own_is_reachable()
+    failures += check_unanchored_is_counted()
+    failures += check_off_target_is_counted()
+    failures += check_symbol_owner_must_be_code()
+    failures += check_the_counts_are_read()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
@@ -1487,8 +1494,388 @@ def main() -> int:
           "same thing; a path that begins with a dot is a mention; a unique "
           "basename against a number is a mention; a basename the tree "
           "cannot resolve names nothing; a span is a word in the cited "
-          "line, not a fragment of one")
+          "line, not a fragment of one; each of the four writings is counted as "
+          "itself; a number past the end of its file is out of range and "
+          "not held; the owner's own line carrying its own name is `own`; "
+          "a reference nothing holds is unanchored; a prefix label whose "
+          "owner is not a target is reported as mis-labelled; a prose owner "
+          "never gets the symbol grade; the counts the report leads with "
+          "are read")
     return 0
+
+
+# --- cell: the writing forms ---------------------------------------------
+#
+# `classify` names the shape a reference is written in -- `prefix` when a
+# target name is glued to the number, `prefix-range` when the number is the
+# first of a range, `link+bare` when the target is inside a markdown link and
+# the number sits elsewhere, `bare` when the target is named anywhere else.
+# The `explicit` count and its pin are built on that label, and until this
+# cell existed no test read it: three mutations of `classify` -- including the
+# reversed-slice defect its own comment documents at length -- left every
+# cell green.
+WRIT_DOC = "docs/fix/writings.md"
+WRIT_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`CMakeLists.txt:7` is the prefix form.",
+        "",
+        "`tools/gate.sh:4-6` is the prefix-range form.",
+        "",
+        "[CMakeLists.txt](CMakeLists.txt) and the number `:3` on the line",
+        "",
+        "a note in CMakeLists.txt about `:5` on the line",
+    ]
+) + "\n"
+
+
+def check_writing_forms() -> int:
+    """Each of the four writings is counted as itself, and only prefix is explicit."""
+    failures = 0
+    r = scan_with({WRIT_DOC: WRIT_TEXT})
+    want = {"prefix": 1, "prefix-range": 1, "link+bare": 1, "bare": 1}
+    for form, count in want.items():
+        got = r["writings"].get(form, 0)
+        if got != count:
+            failures += 1
+            print(f"check_line_refs.test.py: FAIL writing/{form} -- expected "
+                  f"{count} {form} reference(s), got {got}; the readings are "
+                  f"{dict(r['writings'])}")
+    if r["explicit"] != 2:
+        failures += 1
+        print("check_line_refs.test.py: FAIL writing/explicit -- `explicit` "
+              "must count the two prefix forms and no other, got "
+              f"{r['explicit']} for {dict(r['writings'])}")
+    if r["off_target"]:
+        failures += 1
+        print("check_line_refs.test.py: FAIL writing/off -- a prefix reference "
+              f"whose owner is not a target: {r['off_target']!r}")
+    return failures
+
+
+# --- cell: a number past the end of the file it names ---------------------
+#
+# `out_of_range` is a reading this checker prints (18 of them at the time of
+# writing) and it had no test at all: deleting the branch left every cell
+# green while the count went silently to zero and those references moved into
+# `held`, which is the bucket whose whole meaning is "the cited line carries
+# this".
+oor_DOC = "docs/fix/out-of-range.md"
+oor_OTHER = "tools/gate.sh"
+oor_OWNER = "CMakeLists.txt"
+oor_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`tools/gate.sh` and `CMakeLists.txt` cite `deep_word` at `:99`.",
+    ]
+) + "\n"
+oor_OTHER_TEXT = "\n".join(
+    f"line {i}" if i != 99 else "the word deep_word sits here"
+    for i in range(1, 121)
+) + "\n"
+oor_OWNER_TEXT = "\n".join(
+    ["# fixture", "", "set(A 1)", "set(B 2)", "set(C 3)", "set(D 4)", "set(E 5)"]
+) + "\n"
+
+
+def check_out_of_range() -> int:
+    """A number past the end of its file is counted there and NOT as held."""
+    failures = 0
+    r = scan_with(
+        {oor_DOC: oor_TEXT, oor_OTHER: oor_OTHER_TEXT, oor_OWNER: oor_OWNER_TEXT}
+    )
+    if len(r["out_of_range"]) != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL range/count -- expected exactly "
+              "one out-of-range reference, got "
+              f"{len(r['out_of_range'])}: {r['out_of_range']!r}")
+    else:
+        rel, lineno, number, owner, size = r["out_of_range"][0]
+        if (rel, lineno, number, owner, size) != (oor_DOC, 3, 99, oor_OWNER, 7):
+            failures += 1
+            print("check_line_refs.test.py: FAIL range/fields -- expected "
+                  f"({oor_DOC!r}, 3, 99, {oor_OWNER!r}, 7), got "
+                  f"{(rel, lineno, number, owner, size)!r}")
+    if r["held"]:
+        failures += 1
+        print("check_line_refs.test.py: FAIL range/held -- a number the cited "
+              "file does not have cannot be held by it, and got counted in "
+              f"`held`: {r['held_rows']!r}")
+    return failures
+
+
+# --- cell: `own` is reachable at all --------------------------------------
+#
+# `own` is the strongest grade -- the owner's own name is the evidence, on the
+# owner's own line N.  The cells above only ever asked that a citation NOT be
+# graded `own` when the evidence was in another file; deleting the `own`
+# return entirely left them all green, so the grade the report's first column
+# leads with had no cell that could see it disappear.
+own_DOC = "docs/fix/own-here.md"
+own_owner = "tools/gate.sh"
+own_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`CMakeLists.txt` and `tools/gate.sh` are named, and `:7` is cited.",
+    ]
+) + "\n"
+own_OWNER_TEXT = "\n".join(
+    ["#!/bin/bash", "# fixture", "", "echo one", "echo two", "echo three",
+     "this is `tools/gate.sh` itself"]
+) + "\n"
+own_SRC_TEXT = "\n".join(
+    ["# fixture", "", "set(A 1)", "set(B 2)", "set(C 3)", "set(D 4)", "set(E 5)"]
+) + "\n"
+
+
+def check_own_is_reachable() -> int:
+    """The owner's own line carrying its own name IS the `own` grade."""
+    failures = 0
+    r = scan_with(
+        {own_DOC: own_TEXT, own_owner: own_OWNER_TEXT, "CMakeLists.txt": own_SRC_TEXT}
+    )
+    rows = [x for x in r["held_rows"] if x[2] == 7]
+    if len(rows) != 1:
+        print("check_line_refs.test.py: SETUP -- the own fixture produced "
+              f"{len(rows)} held reference(s) at :7, expected 1")
+        return 2
+    row = rows[0]
+    if row[4] != "own":
+        failures += 1
+        print("check_line_refs.test.py: FAIL own/grade -- the owner's own line "
+              "carries the owner's own name, and the grade is "
+              f"{row[4]!r}, not 'own' (holder {row[5][0]}:{row[5][2]} "
+              f"span {row[5][1]!r})")
+    if r["held_own"] != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL own/count -- expected held_own=1, "
+              f"got {r['held_own']}")
+    return failures
+
+
+# --- cell: a reference nothing holds --------------------------------------
+#
+# `unanchored` is the biggest number this checker reports (563 of 185 explicit
+# at the time of writing), it is the one the unanchored delta is pinned on,
+# and deleting the whole `no_anchor` branch left every cell green: the count
+# could become zero and the pin would read "delta -563" as an improvement.
+una_DOC = "docs/fix/unanchored.md"
+una_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`tools/gate.sh` and `CMakeLists.txt` cite `absent_word` at `:5`.",
+    ]
+) + "\n"
+una_OTHER_TEXT = "\n".join(
+    ["#!/bin/bash", "# fixture", "", "echo one", "echo two", "echo three",
+     "echo four"]
+) + "\n"
+una_OWNER_TEXT = "\n".join(
+    ["# fixture", "", "set(A 1)", "set(B 2)", "set(C 3)", "set(D 4)", "set(E 5)"]
+) + "\n"
+
+
+def check_unanchored_is_counted() -> int:
+    """A reference whose quoted text is on no named line is `unanchored`."""
+    failures = 0
+    r = scan_with(
+        {una_DOC: una_TEXT, "tools/gate.sh": una_OTHER_TEXT,
+         "CMakeLists.txt": una_OWNER_TEXT}
+    )
+    if r["held"]:
+        failures += 1
+        print("check_line_refs.test.py: FAIL anchor/held -- nothing on any "
+              f"named line carries `absent_word`, and `held` counts "
+              f"{r['held']}: {r['held_rows']!r}")
+    if len(r["no_anchor"]) != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL anchor/count -- expected exactly "
+              f"one unanchored reference, got {len(r['no_anchor'])}: "
+              f"{r['no_anchor']!r}")
+    else:
+        rel, _lineno, _first, _last, number, target, cited = r["no_anchor"][0]
+        if (rel, number, target) != (una_DOC, 5, "CMakeLists.txt"):
+            failures += 1
+            print(f"check_line_refs.test.py: FAIL anchor/fields -- expected "
+                  f"({una_DOC!r}, 5, 'CMakeLists.txt'), got "
+                  f"{(rel, number, target)!r}")
+        if cited != "set(C 3)":
+            failures += 1
+            print("check_line_refs.test.py: FAIL anchor/cited -- the row must "
+                  f"quote what line 5 actually says, got {cited!r}")
+    return failures
+
+
+# --- cell: the writing label and the owner disagree -----------------------
+#
+# `off_target` is the canary for the two rules that decide a prefix-form
+# reference disagreeing: `classify` says a target name is glued to the number
+# and the owner rule says the number belongs to a file that is not a target.
+# The pair is what the reversed-slice defect produced -- 788 prefix references
+# on 1c6b338, 416 of them owned by a file that is not a target -- and its
+# ceiling is 0.
+#
+# With a correct `classify` the two rules cannot disagree, so no ordinary
+# fixture can make this count non-zero, and `off target never` survived every
+# cell above (the count could be deleted and nothing noticed).  A cell for it
+# therefore has to make the rules disagree on purpose: the canary is only
+# worth its ceiling if it fires when they do.
+off_DOC = "docs/fix/off-target.md"
+off_NOTES = "docs/fix/notes.md"
+off_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`tools/gate.sh` and docs/fix/notes.md both carry `:5`.",
+    ]
+) + "\n"
+off_OTHER_TEXT = "\n".join(
+    ["#!/bin/bash", "# fixture", "", "echo one", "echo two", "echo three",
+     "echo four"]
+) + "\n"
+off_NOTES_TEXT = "\n".join(
+    ["# notes", "", "one", "two", "three", "four", "five"]
+) + "\n"
+
+
+def check_off_target_is_counted() -> int:
+    """A prefix label whose owner is not a target is reported as mis-labelled."""
+    failures = 0
+    real = C.classify
+    C.classify = lambda line, mentions, m: "prefix"
+    try:
+        r = scan_with(
+            {off_DOC: off_TEXT, "tools/gate.sh": off_OTHER_TEXT,
+             off_NOTES: off_NOTES_TEXT}
+        )
+    finally:
+        C.classify = real
+    if len(r["off_target"]) != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL off/count -- a reference labelled "
+              "`prefix` whose owner is not a target must be reported, and "
+              f"off_target holds {len(r['off_target'])}: {r['off_target']!r}")
+    else:
+        rel, lineno, number, owner = r["off_target"][0]
+        if (rel, lineno, number, owner) != (off_DOC, 3, 5, off_NOTES):
+            failures += 1
+            print("check_line_refs.test.py: FAIL off/fields -- expected "
+                  f"({off_DOC!r}, 3, 5, {off_NOTES!r}), got "
+                  f"{(rel, lineno, number, owner)!r}")
+    if r["explicit"] != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL off/explicit -- the mis-labelled "
+              f"reference is still counted as explicit, got {r['explicit']}")
+    return failures
+
+
+# --- cell: the symbol channel only reaches compiled code -------------------
+#
+# The `symbol` grade means "the citing line and the cited line talk about the
+# same symbol".  In a compiled language an identifier IS a symbol; in Markdown,
+# shell or CMake the same characters are ordinary English words, so sharing one
+# proves nothing.  `is_code_owner` is that gate -- and nothing tested it: letting
+# it return True for every owner left every cell green, so a prose file whose
+# line N happens to share a word with the citing line could be graded `symbol`
+# and no cell would say otherwise.
+symown_DOC = "docs/fix/symbol-owner.md"
+symown_OWNER = "docs/fix/words.md"
+symown_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`tools/gate.sh` and docs/fix/words.md both say `builtin_lookup` at `:5`.",
+    ]
+) + "\n"
+symown_OTHER_TEXT = "\n".join(
+    ["#!/bin/bash", "# fixture", "", "echo one", "echo two", "echo three",
+     "echo four"]
+) 
+# Line 5 carries the word: the owner file's OWN line 5 holds the span, so the
+# row is held by the owner and the only question left is the grade.
+symown_OWNER_TEXT = "\n".join(
+    ["# words", "", "one", "two", "builtin_lookup is a word here", "four"]
+) + "\n"
+
+
+def check_symbol_owner_must_be_code() -> int:
+    """A prose owner never gets the `symbol` grade, however the words line up."""
+    failures = 0
+    other = symown_OTHER_TEXT.replace(
+        "echo two", "builtin_lookup is quoted on this line"
+    )
+    r = scan_with(
+        {symown_DOC: symown_TEXT, "tools/gate.sh": other,
+         symown_OWNER: symown_OWNER_TEXT}
+    )
+    rows = [x for x in r["held_rows"] if x[2] == 5]
+    if len(rows) != 1:
+        print("check_line_refs.test.py: SETUP -- the code-owner fixture "
+              f"produced {len(rows)} held reference(s) at :5, expected 1")
+        return 2
+    row = rows[0]
+    if row[3] != symown_OWNER:
+        failures += 1
+        print("check_line_refs.test.py: FAIL symowner/owner -- the number must "
+              f"be owned by {symown_OWNER!r}, got {row[3]!r}")
+    if row[4] == "symbol":
+        failures += 1
+        print("check_line_refs.test.py: FAIL symowner/grade -- the owner is a "
+              "Markdown file and the two lines share an English word, which is "
+              f"not a symbol; grade is {row[4]!r}")
+    return failures
+
+
+# --- cell: the counts the report leads with --------------------------------
+#
+# Three readings this checker prints on every run -- the lines that name a
+# target (`mention_lines`), the lines that also carry a number
+# (`inline_lines`), and the references it held (`held`) -- had no cell that
+# read them, and each of them could be switched off (or the hold doubled)
+# with every other cell still green.  They are the numbers the report's
+# first line is made of, so a change in them changes what the report says
+# without changing anything the report claims.
+cnt_DOC = "docs/fix/counts.md"
+cnt_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`tools/gate.sh` carries `deep_word` at `:3`.",
+        "",
+        "`tools/gate.sh` is named here too.",
+        "",
+        "a line that names no target at all",
+    ]
+) + "\n"
+# Line 3 of the other file carries the span, so the reference at :3 is held
+# BY that file -- the owner of the number is the other file named on the line.
+cnt_OTHER_TEXT = "\n".join(
+    ["#!/bin/bash", "# fixture", "the word deep_word sits here", "echo four"]
+) + "\n"
+
+
+def check_the_counts_are_read() -> int:
+    """mention_lines, inline_lines and held each read what they say."""
+    failures = 0
+    r = scan_with({cnt_DOC: cnt_TEXT, "tools/gate.sh": cnt_OTHER_TEXT})
+    if r["mention_lines"] != 2:
+        failures += 1
+        print("check_line_refs.test.py: FAIL counts/mention -- two lines name a "
+              f"target, mention_lines says {r['mention_lines']}")
+    if r["inline_lines"] != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL counts/inline -- one of those "
+              "lines carries a number, inline_lines says "
+              f"{r['inline_lines']}")
+    if r["held"] != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL counts/held -- exactly one "
+              f"reference is held, `held` says {r['held']}: {r['held_rows']!r}")
+    return failures
 
 
 if __name__ == "__main__":
