@@ -20129,3 +20129,263 @@ the cited line" is never asked about the 65 `borrowed` rows or the 9
 `own` rows, even when the owner is a C file. The 19 rows this round
 fixed were the ones where the channel ran and answered incorrectly;
 nothing here asks whether it should have run more often.
+
+## §10.281 — the cells that did not hold the rule they were named for
+
+**1. Where this round starts.** The checker for line references,
+`tools/check_line_refs.py`, has a test file next to it,
+`tools/check_line_refs.test.py`, and the test file is registered as a
+CTest (`line_refs_report_regression`) and run by the gate on every
+commit. That is the shape this repository has been building for
+several rounds: a checker that used to run only by hand now has a
+registered test, and the gate's own stage runs it.
+
+The thing this round looked at is the last step of that shape. A test
+that runs is not the same as a test that holds. Every cell in the
+suite is named after a rule -- "a hold by a file that is not the owner
+is counted as a coincidence", "a citation has an address and an
+identity and they are not the same" -- and the name is a claim about
+what the cell checks. The claim was never measured. The way to
+measure it is mutation testing: change the checker in a way that
+breaks exactly one rule, run the suite, and see whether any cell
+notices.
+
+Twelve of the twenty-eight mutations survived the suite as it stood
+at the start of this round. Twelve of the checker's rules could be
+broken with the whole test file still green.
+
+**2. The method, and what it costs.** The harness is a directory of
+copies. `tools/check_line_refs.py` and `tools/check_line_refs.test.py`
+are copied into a scratch directory, the test file replaces the
+checker's tree with its own fake tree, and each mutation is a
+string replacement in the copy. The suite runs against a fake tree
+(`FakeTree`), so it needs no repository at all; the copy is enough.
+A mutation that survives is one where the suite exits zero.
+
+The harness has three sharp edges, and all three of them produced a
+wrong answer before they produced a right one.
+
+*The scratch copy must live inside `tools/`.* The checker computes
+its repository root as the parent of the file's own directory, so a
+copy placed at the top of the tree resolves to the parent of the
+repository and its `git ls-files` call fails with exit 128. The
+probe scripts that drive the harness have the same requirement.
+
+*`__pycache__` has to be cleared between runs.* Python caches the
+compiled checker by path and mtime. The harness writes a mutated
+checker to the same path every time, and when the mutation is small
+enough the mtime does not change enough to invalidate the cache. The
+result was a mutation that appeared to survive when it had in fact
+been caught, and a second mutation that appeared to be caught by the
+wrong cell. Clearing the cache between runs -- and running the
+interpreter with `-B` -- turned both around. This is the same
+failure the repository has hit before with a stale binary: the tool
+answered, and the answer was about the previous run.
+
+*The fixture's line numbers have to be the line numbers the fixture
+uses.* This is the deepest of the three, and it produced two wrong
+conclusions in this round. A fixture whose cited line does not carry
+the span is not a fixture that fails; it is a fixture that produces
+no row at all, and a cell that asserts on no row reports "the
+fixture, not the checker, is broken" -- a setup error, not a
+failure. Two of the seven cells written this round had to be
+re-aligned because the span sat on a different line than the
+citation named.
+
+**3. The twelve that survived.** Each of these is a rule the checker
+states, in a comment or in the name of a report line, and each is a
+change to the checker that the suite did not notice.
+
+*The `own` grade could never be produced.* The rule is one line:
+if the owner's own line carries the owner's own name, the grade is
+`own`. Replacing that line so it never fires drops every `own` row
+on the tree -- nine of them -- and the suite stays green. The cell
+that was supposed to guard this rule, `check_own_needs_the_owner`,
+guards the other direction: it checks that a reference is not `own`
+when the owner's line does not carry the owner's name. It never
+checks that a reference *is* `own` when the line does.
+
+*The out-of-range reading could never be produced.* The rule is that
+a citation naming a line past the end of the file it names is
+reported as out of range and is not held. Switching the test off
+drops the eighteen rows the checker reports on this tree, and the
+suite stays green. Nothing asserted on the reading.
+
+*The writing-form classifier could ignore position.* The classifier
+decides whether a reference is written as a prefix -- the file's name
+and the number with nothing between them -- or as a bare number
+elsewhere on the line. The test is `end == m.start()`, which asks
+whether the file's name ends exactly where the number begins. The
+alternative is to ask only whether the name is a target at all, and
+then every name on the line counts as a prefix. That alternative is
+the defect the checker's own comment describes at length: the
+comment records that at the baseline tree, 603 of the 788 prefix
+references were supported by a name to the right of the number
+rather than to the left, and that 416 of those had an owner that was
+not the target the prefix named. The comment is a measurement. No
+cell was holding it.
+
+*The range writing could be folded into the plain one.* `prefix-range`
+is the form where the number carries a second number -- a line
+range. Collapsing it into `prefix` changes nothing the report says
+and the suite stays green.
+
+*The unanchored reading could never be produced.* The rule is that a
+reference no named file can hold is reported as unanchored, with the
+document, the line, the number, the target and the cited line's own
+text. Switching the append off empties the list, and the suite
+stays green. The reading is the largest one the checker prints --
+563 rows on this tree -- and no cell read it.
+
+*The mis-labelled reading could never be produced.* The rule is that
+a prefix reference whose owner is not a target is a mistake in the
+document, and it is reported separately. Switching the test off
+empties that list and the suite stays green.
+
+*The symbol channel could treat every owner as code.* The rule is
+that only an owner written in a compiled language can be held by a
+symbol. Replacing that test so that every owner qualifies changes
+nothing the suite notices, even though the symbol channel is the
+thing that reaches for a shared identifier in the owner's file.
+
+*The grade could skip its own check.* There is a rule that a grade
+of `own` requires the holder to be the owner; replacing the test
+with `False` keeps the suite green.
+
+*Three of the readings the report leads with could be switched off.*
+The count of lines that name a target, the count of those that also
+carry a number, and the count of references that were held -- the
+first three numbers the checker prints -- could each be changed
+without a single cell noticing. And the count of held references
+could be doubled: the same thing, reported as twice as many.
+
+**4. The seven cells that close them.** Each new cell asserts one
+thing the old suite did not, and each is named after the rule rather
+than after the fixture.
+
+`check_writing_forms` writes the four forms -- prefix, prefix-range,
+link-plus-bare, bare -- and checks that each is counted as itself,
+and that the count of explicit references is the count of the two
+prefix forms and nothing else. This is the cell that catches the
+reversed-slice defect, because the defect changes a bare reference
+into a prefix one.
+
+`check_out_of_range` cites a line past the end of the file it names
+and checks that the reading is reported and the reference is not
+held.
+
+`check_own_is_reachable` cites a line whose owner carries the
+owner's own name and checks that the grade is `own`, and that the
+count of `own` rows is what the fixture says. The count matters as
+much as the grade: the first version of this cell asserted the grade
+alone, and it did not catch the mutation that removed the grade rule
+but kept the row.
+
+`check_unanchored_is_counted` cites a line that nothing holds and
+checks the four fields of the unanchored row -- the document, the
+number, the target, and the cited line's own text.
+
+`check_off_target_is_counted` needs the two rules to disagree before
+it can say anything, and the two rules cannot disagree on this tree:
+a prefix reference's owner is the target it names, so the
+mis-labelled list is empty on every real document. The cell
+therefore replaces the classifier with one that always reports a
+prefix, which is the only way to make a named target's owner
+something other than a target, and checks that the reading appears.
+
+`check_symbol_owner_must_be_code` gives a reference an owner written
+in a language that is not compiled and checks that the grade is not
+`symbol`, and that the owner it reports is the one the position rule
+picked rather than the file that happened to carry the identifier.
+
+`check_the_counts_are_read` reads the three numbers the report leads
+with. The fixture has two lines that name a target and one of them
+carries a number, and one reference that is held.
+
+**5. What the mutation run says now.** All twenty-eight mutations
+are caught by the suite as it stands after this round, and the twelve
+that survived before it are caught by the seven new cells. The
+harness runs the whole matrix in about six seconds, which is what
+makes it usable as a habit rather than as an occasion.
+
+Two things this does not claim. It does not claim that twenty-eight
+mutants is the right number, or that they cover the checker: they
+were chosen from the rules the checker's own comments state, and a
+rule nobody wrote down cannot be mutated by this method. It does not
+claim that a cell which catches a mutation is a good cell. The
+mutation only says the cell reads something the rule changes; what
+the cell asserts is a separate question, and the seven cells here
+each assert a number or a field, not merely that something differs.
+
+**6. The two mutants that behaved oddly.** One mutation -- making the
+span always appear -- was caught by two cells. Its opposite, making
+the span never appear, was caught with no label at all: the suite
+exits 2 and prints a setup error, because the fixture that was
+supposed to be held is not held. That is a weaker signal than a
+labelled failure, and it is worth knowing which kind of catch a
+mutation got.
+
+One mutation in the first harness was a mistake of the harness, not
+of the checker: it appended a no-op line after the counter rather
+than changing the counter, so it changed nothing and correctly
+survived. When it was rewritten to actually double the count, the
+new cell caught it. A harness that reports a surviving mutant has
+to be read as "no cell noticed this change", not as "this change is
+harmless", and the difference between those two is a matter of
+whether the mutation did anything.
+
+**7. The fixture traps, in full.** They are worth writing down,
+because every one of them produced a false conclusion first.
+
+*A fixture whose cited line carries no span produces no row.* The
+cell then reports a setup error and the suite exits 2. The failure
+looks like a checker that cannot do its job, and is really a
+fixture whose line numbers do not match its content.
+
+*The holder is chosen among the files the line names.* A fixture
+that puts the span on the wrong one of two named files will be held
+by the other one, and the grade the cell expects will not appear.
+This is what made the symbol-owner cell report `picked up` instead
+of `symbol` on its first run: the span was on the line of the file
+that was the bystander, and the bystander won.
+
+*The unanchored row has seven fields.* They are the document, the
+line, the first and last numbers on that line, the number, the
+target, and the first sixty-four characters of the cited line. A cell
+that unpacks six of them raises an unpacking error rather than
+failing.
+
+**8. What this round changed.** Seven cells in
+`tools/check_line_refs.test.py`, and nothing else. The checker's
+behaviour is unchanged, so every reading it prints is the reading it
+printed before: 618 references held, 563 unanchored, 185 explicit,
+the four pins where they were. The test file grows from fifteen
+cells to twenty-two.
+
+**9. What this round does not settle.** Four things.
+
+**The mutation set is the checker's own comments, and nothing
+else.** Every mutant here comes from a rule the checker states about
+itself. The rules nobody states -- the ones where the code does
+something the author did not write down -- are outside what this
+method can see, and there are certainly some.
+
+**A cell that catches a mutation is not a cell that states a rule.**
+The seven new cells assert numbers and fields, which is what makes
+them worth having, but they assert them about fixtures whose shape
+the author chose. A fixture that makes the rule easy to see is a
+fixture that makes the rule true by construction for that shape.
+
+**The suite still has no cell for the report's own numbers.** The
+checker's report leads with how many references were held and how
+many were not. `check_the_counts_are_read` reads the counts of the
+scan's internals. The report line that prints them is still not
+read by anything, and it is the line a reader of a failing gate
+sees first.
+
+**The instrument has no idea how it would be broken next.** This
+round's answer was a manual mutation set. The obvious next step is
+a checker for the checker: something that reads the cells and asks
+whether each rule the code states has a cell that fails when the
+rule is removed. That is a large piece of work and it is not
+attempted here.
