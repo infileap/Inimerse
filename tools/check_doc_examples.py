@@ -602,7 +602,15 @@ def self_test() -> int:
         "a same-line binder is found, and only for its own name",
     ):
         print("  ok   %s" % line)
-    print("check_doc_examples: self-test OK")
+    if not arrow_cases:
+        print(
+            "check_doc_examples: self-test FAILED -- the case table is empty, "
+            "so a suite that runs none reports success by arithmetic "
+            "(docs/STATUS.md 10.294)",
+            file=sys.stderr,
+        )
+        return 1
+    print("check_doc_examples: self-test OK (%d cases)" % len(arrow_cases))
     return 0
 
 

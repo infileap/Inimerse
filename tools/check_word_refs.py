@@ -239,9 +239,13 @@ def self_test():
     cases.append("offender-inside-a-fence")
     if not got_fenced:
         bad.append("offender-inside-a-fence")
+    ok = not bad and len(cases) > 0
+    if not cases:
+        print("WORD-REF-SELFTEST: the case list is empty, so a suite that runs "
+              "none reports success by arithmetic (docs/STATUS.md 10.294)")
     print("WORD-REF-SELFTEST-VERDICT|cases=%d|red=%d|verdict=%s"
           % (len(cases), len(bad), "FAIL" if bad else "PASS"))
-    return 1 if bad else 0
+    return 0 if ok else 1
 
 
 def main(argv=None):

@@ -491,11 +491,16 @@ def self_test() -> int:
         shutil.rmtree(scratch, ignore_errors=True)
 
     total = len(cases) + len(gate_cases) + 3
+    ok = failures == 0 and (len(cases) + len(gate_cases)) > 0
+    if not cases and not gate_cases:
+        print("PROBE-PYASSERT-SELFTEST: both case tables are empty, so only the "
+              "three file assertions ran; a suite that runs 3 of its checks "
+              "reports success by arithmetic (docs/STATUS.md 10.294)")
     print(
         "PROBE-PYASSERT-SELFTEST-VERDICT|cases=%d|red=%d|verdict=%s"
-        % (total, failures, "PASS" if failures == 0 else "FAIL")
+        % (total, failures, "PASS" if ok else "FAIL")
     )
-    return 0 if failures == 0 else 1
+    return 0 if ok else 1
 
 
 def main(argv: list[str]) -> int:
