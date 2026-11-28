@@ -1471,6 +1471,7 @@ def main() -> int:
     failures += check_word_boundary()
     failures += check_writing_forms()
     failures += check_out_of_range()
+    failures += check_out_of_range_without_a_holder()
     failures += check_own_is_reachable()
     failures += check_unanchored_is_counted()
     failures += check_off_target_is_counted()
@@ -1496,7 +1497,9 @@ def main() -> int:
           "cannot resolve names nothing; a span is a word in the cited "
           "line, not a fragment of one; each of the four writings is counted as "
           "itself; a number past the end of its file is out of range and "
-          "not held; the owner's own line carrying its own name is `own`; "
+          "not held; out of range does not need a holder to be out of "
+          "range, and that row is in the unanchored list too; "
+          "the owner's own line carrying its own name is `own`; "
           "a reference nothing holds is unanchored; a prefix label whose "
           "owner is not a target is reported as mis-labelled; a prose owner "
           "never gets the symbol grade; the counts the report leads with "
@@ -1603,6 +1606,74 @@ def check_out_of_range() -> int:
         print("check_line_refs.test.py: FAIL range/held -- a number the cited "
               "file does not have cannot be held by it, and got counted in "
               f"`held`: {r['held_rows']!r}")
+    return failures
+
+
+# --- cell: out of range whether or not something else holds it -----------
+#
+# The bucket used to require a HOLDER: `if hits and owner_lines and number >
+# len(owner_lines)`.  A number past the end of its own file that nothing else
+# happens to hold was therefore never counted here at all -- it stayed in the
+# unanchored list with the literal "<out of range>" typed into its `cited`
+# field, so the count and the report disagreed about the same reference and
+# the count was the smaller one.  The cell above cannot see that: its fixture
+# gives the row a holder on purpose.  This one takes the holder away.
+oor2_DOC = "docs/fix/out-of-range-bare.md"
+oor2_OTHER = "tools/gate.sh"
+oor2_OWNER = "CMakeLists.txt"
+oor2_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`tools/gate.sh` and `CMakeLists.txt` cite `deep_word` at `:99`.",
+    ]
+) + "\n"
+oor2_OTHER_TEXT = "\n".join(
+    f"line {i}" for i in range(1, 8)
+) + "\n"
+oor2_OWNER_TEXT = "\n".join(
+    ["# fixture", "", "set(A 1)", "set(B 2)", "set(C 3)", "set(D 4)", "set(E 5)"]
+) + "\n"
+
+
+def check_out_of_range_without_a_holder() -> int:
+    """A number past the end of its file is out of range with no holder too."""
+    failures = 0
+    r = scan_with(
+        {oor2_DOC: oor2_TEXT, oor2_OTHER: oor2_OTHER_TEXT, oor2_OWNER: oor2_OWNER_TEXT}
+    )
+    if len(r["out_of_range"]) != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL range/bare -- a number past the "
+              "end of the file it names is out of range whether or not some "
+              "other file holds that line number; nothing holds this one and "
+              f"the bucket has {len(r['out_of_range'])} entry(ies): "
+              f"{r['out_of_range']!r}")
+        return failures
+    rel, lineno, number, owner, size = r["out_of_range"][0]
+    if (rel, lineno, number, owner, size) != (oor2_DOC, 3, 99, oor2_OWNER, 7):
+        failures += 1
+        print("check_line_refs.test.py: FAIL range/bare-fields -- expected "
+              f"({oor2_DOC!r}, 3, 99, {oor2_OWNER!r}, 7), got "
+              f"{(rel, lineno, number, owner, size)!r}")
+    if r["held"]:
+        failures += 1
+        print("check_line_refs.test.py: FAIL range/bare-held -- a number the "
+              f"cited file does not have was counted in `held`: {r['held_rows']!r}")
+    # The overlap is deliberate: "the owner has no such line" and "nothing
+    # named on the line carries it" are two facts about one reference, and the
+    # unanchored ratchet must keep seeing the second one.
+    if not any(x[0] == oor2_DOC and x[4] == 99 for x in r["no_anchor"]):
+        failures += 1
+        print("check_line_refs.test.py: FAIL range/bare-overlap -- the "
+              "reference is out of range AND nothing carries it, so the "
+              "unanchored list has to contain it as well; it does not: "
+              f"{r['no_anchor']!r}")
+    if r["oor_bare"] != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL range/bare-split -- the report "
+              "says how the bucket divides and this row is the `nothing "
+              f"holds it` half; oor_bare is {r['oor_bare']}, expected 1")
     return failures
 
 

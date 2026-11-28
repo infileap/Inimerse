@@ -81,14 +81,14 @@ not proximity, and not the name nearest the number.  Then:
                       line N does not, so every out-of-range number landed in
                       the `held elsewhere` bucket BY CONSTRUCTION -- never by
                       evidence, and no reading of this file could tell the
-                      difference.  Measured on `89ec77a`: 55 of them under this
-                      rule (the number is past the end of the file it names).
-                      A separate probe counted 26 there, because it asked about
-                      the file the report PRINTS rather than the file the number
-                      is attached to -- see the `target` boundary below.  A
-                      number that does not exist in the file it names was being
-                      certified either way.
-    no anchor         nothing named on the line carries it.
+                      difference.  Measured on `89ec77a`: 47 of them under this
+                      rule -- 26 that another file happens to hold, 21 that
+                      nothing holds.  The bucket used to ask for a HOLDER too,
+                      so it printed only the half another file held.  A probe
+                      counted 55 there: it also counted the rows naming no file.
+                      The rule below now asks about the owner alone.
+    no anchor         nothing named on the line carries it.  A number can be out
+                      of range as well; the two buckets overlap on purpose.
 
 The gate stage asserts DENOMINATORS, not anchor rates:
 
@@ -1395,6 +1395,13 @@ def scan() -> dict:
     no_anchor: list[tuple] = []
     off_target: list[tuple] = []
     out_of_range: list[tuple] = []
+    # How the out-of-range bucket splits: the ones another file happens to
+    # hold by line number, and the ones nothing holds at all.  The second
+    # group is ALSO in `no_anchor` -- it is not displaced, it is counted
+    # twice, because "the owner has no line N" and "nothing carries it" are
+    # two different facts about the same reference.
+    oor_held = 0
+    oor_bare = 0
     mention_lines = 0
     inline_lines = 0
     files: set[str] = set()
@@ -1515,13 +1522,32 @@ def scan() -> dict:
                     # bucket.  docs/BOARD.md:64's `:1569` against CMakeLists.txt
                     # (1533 lines) is one.
                     #
-                    # It displaces `held` ONLY.  A number with no anchor at all
-                    # is still reported as unanchored -- that is the diagnostic
-                    # that says the number will move, and it is a different
-                    # question from whether the number exists.  Moving those out
-                    # of `no_anchor` too would have silently re-based the
-                    # unanchored delta, which is pinned.
+                    # It displaces `held` ONLY: a number whose owner's file
+                    # has no line N must not be counted as held, because the
+                    # lookup that fills `hits` can only collect a file whose
+                    # line N exists, so any hold of it is a coincidence of line
+                    # numbers and never evidence about the cited line.  It DOES
+                    # stay in `no_anchor` when nothing holds it -- "nothing named
+                    # on the line carries it" is a second, independent fact, and
+                    # the unanchored ratchet must keep seeing it.
+                    #
+                    # THE QUESTION IS ABOUT THE OWNER, NOT ABOUT THE HOLDERS.
+                    # The rule used to be `if hits and owner_lines and number >
+                    # len(owner_lines)`, so the bucket recorded a reference only
+                    # when some OTHER file's line N happened to carry a span.
+                    # The half that nothing holds was never counted here; the
+                    # report printed the literal "<out of range>" in its `cited`
+                    # column instead, so the number and the report disagreed
+                    # about the same fact and the number was the smaller one.
+                    # Measured on 395d1a60: the bucket reported 18, and 40
+                    # references name a line their owner does not have (18 held
+                    # by another file, 22 held by nothing).  On 1c6b338: 27
+                    # reported, 53 true, because it has 26 past-end rows with no
+                    # holder.  The gap is not new; it is what the rule always
+                    # did.  A reference with no owner at all is NOT out of
+                    # range: there is no file to be past the end of.
                     owner_lines = _lines(owner) if owner else None
+                    _past_end = bool(owner_lines and number > len(owner_lines))
                     # The cited FILE cannot be told apart: two of the files
                     # this line names carry the same quoted text on line N.
                     #
@@ -1549,11 +1575,20 @@ def scan() -> dict:
                         ambiguous.append(
                             (rel, lineno, number, _holders_here)
                         )
-                    if hits and owner_lines and number > len(owner_lines):
+                    if _past_end:
+                        # EVERY reference whose owner's file has no line N,
+                        # whether or not something else holds it.  A row that
+                        # is also held by another file is still out of range:
+                        # the owner's line N does not exist, and the holder is
+                        # a coincidence of line numbers.
                         out_of_range.append(
                             (rel, lineno, number, owner, len(owner_lines))
                         )
-                    elif hits:
+                        if hits:
+                            oor_held += 1
+                        else:
+                            oor_bare += 1
+                    if hits and not _past_end:
                         held += 1
                         # `held_elsewhere` is the same fact the coincidence
                         # count measures, and it is counted AFTER the holder
@@ -1805,7 +1840,7 @@ def scan() -> dict:
                             (rel, lineno, number, owner, grade,
                              (holder_file, holder_span, matched, _holding_kind))
                         )
-                    else:
+                    elif not hits:
                         # The report says which file the number points at, so it
                         # has to use the position rule the owner already uses:
                         # the last tracked name ENDING at or before the number.
@@ -1872,6 +1907,7 @@ def scan() -> dict:
         "input_set_docs": len(TREE.docs()),
         "held_elsewhere": held_elsewhere, "no_anchor": no_anchor,
         "off_target": off_target, "out_of_range": out_of_range,
+        "oor_held": oor_held, "oor_bare": oor_bare,
         "held_own": held_own, "held_borrowed": held_borrowed,
         "held_symbol": held_symbol,
         "held_attributed": held_attributed, "held_no_holder": held_no_holder,
@@ -2412,7 +2448,11 @@ def main() -> int:
             f"check_line_refs: out of range -- {len(r['out_of_range'])} "
             f"reference(s) name a line that does not exist in the file they "
             f"name.  These are NOT counted as held: the file whose line N "
-            f"carries them is some other file, and it always would be."
+            f"carries them is some other file, and it always would be.  "
+            f"{r['oor_held']} of them are held by another file that way and "
+            f"{r['oor_bare']} are held by nothing at all, so "
+            f"{r['oor_bare']} appear in the unanchored count as well -- the "
+            f"two buckets answer two questions and overlap on purpose."
         )
     print(
         f"check_line_refs: base {EXP_LINE_REFS_BASE} is {behind} commit(s) "
