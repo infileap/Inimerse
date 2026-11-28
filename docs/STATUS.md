@@ -20767,7 +20767,147 @@ honest, but it means `1065` is an upper bound on "numbers in `docs/`
 that are not references to this tree", never a lower one.
 
 **The `--report` per-grade loop still omits `symbol`.** §10.282
-recorded it as a one-line fix deliberately not made; this round did
-not make it either, for the same reason: it moves `--report` output
-that §10.278's receipt-style tests read, and it is not this round's
-defect.
+recorded it as a one-line fix deliberately not made, and this round
+did not make it either, for the same reason §10.282 gave: it moves
+`--report` output that receipt-style tests read. **That reason is
+false, and §10.284 measured it false** — no test in this repository
+spawns the checker with `--report`, and no consumer of those lines
+exists anywhere in the tree. Two rounds deferred a one-line fix on a
+ground nobody checked; the number in the header (618) and the numbers
+the report showed examples for (550) disagreed by exactly the grade
+that was missing, and it stayed that way. §10.284 does the fix. The
+sentence is left here, corrected rather than deleted, because "a test
+reads it" is the shape of reason that costs a round every time it goes
+unchecked.
+
+## §10.284 — the report showed three grades and counted four
+
+**1. Where this round starts.** `tools/check_line_refs.py --report` ends
+with a per-grade section. For each grade it prints a count and the first
+two rows behind it, so that "own" is a claim a reader can check rather
+than a number the report asks to be believed. The loop that does this
+walked a hand-written list of three names:
+
+```
+for grade in ("own", "borrowed", "picked up"):
+```
+
+The receipt line above it, twenty-six lines earlier, names four:
+`own 9, borrowed 65, symbol 68, picked up 476`. The `symbol` grade was
+added three rounds ago, the counter was updated, and the loop was not.
+
+**2. What that costs a reader.** The report prints its own total as
+`held -- 618 total: own 9, borrowed 65, symbol 68, picked up 476` and
+then, further down and under the same heading, shows examples for
+categories that sum to `9 + 65 + 476 = 550`. A reader who adds the
+per-grade lines gets a number that is not the header, and the missing
+68 are one grade. Nothing in the run is red: every number printed is
+true, the list is short. This is the same shape as §10.281 (cells whose
+names promise a rule the cell does not test) and §10.283 (a counter one
+branch away from its own population) — a list that was correct when it
+was written.
+
+**3. The reason it survived two rounds, and why that reason is false.**
+§10.282 recorded this defect and declined the fix: *"it is a one-line
+fix that this round did not make because it would have moved the
+`--report` output that §10.278's receipt-style tests read."* §10.283
+carried the same sentence forward verbatim. Both were wrong, and the
+claim was never run:
+
+| question | command | result |
+| --- | --- | --- |
+| does anything spawn the checker with `--report`? | `git grep -n '\-\-report' -- tools/*.test.py` | no hit |
+| does anything read a per-grade line? | `git grep -n 'held, own\|held, borrowed\|held, picked up'` | no hit outside the checker itself |
+| did §10.278 actually touch that output? | `git show 5de8cfed -- tools/check_line_refs.py \| grep -E '^[-+].*(first two\|held, )'` | no hit |
+
+So the reason was not merely stale — it was a claim about a test that
+does not exist, repeated across two sections without either one running
+the grep. This is worth more than the fix: **"a test reads it" is the
+shape of reason that costs a round every time it goes unchecked**,
+because it is cheap to state and it sounds like diligence.
+
+**4. The fix is one list, not a longer literal.** The obvious repair —
+add `"symbol"` to the tuple — leaves the same defect one grade away: the
+next grade added to the counters would again need someone to remember
+this line. So the names become a module constant read by both places:
+
+```
+GRADES = ("own", "borrowed", "symbol", "picked up")
+```
+
+and the loop reads `for grade in GRADES`. The ordering is the receipt's
+own ordering, so the two places cannot disagree about it either.
+
+**5. The cell, and the two controls.** `tools/check_line_refs.test.py`
+gains `check_every_grade_has_a_report_line`, which asserts three things:
+every grade the counters can publish is in `GRADES`; `GRADES` holds no
+name the scan cannot produce; and the loop's source reads `GRADES`
+rather than a literal. The third is not decoration — it is the only one
+that catches the exact regression, because a second hand-written list
+would satisfy the first two assertions on the day it was written.
+
+Two controls, each red on its own assertion and nothing else:
+
+```
+control 1: GRADES loses `symbol`
+  FAIL grades/list -- these grades are counted but not in GRADES: ['symbol']
+control 2: the loop goes back to a literal
+  FAIL grades/loop -- --report no longer walks GRADES; a hand-written list in
+  its place is the defect this cell exists for
+```
+
+Both restored, `ok` again. The suite is twenty-five cells.
+
+**6. Two self-reference effects, met and recorded.** Editing
+`tools/check_line_refs.py` is editing a file that `docs/` cites, and
+this file's own line numbers and length are read input. Both of the
+effects §10.282 and §10.283 recorded fired again on this change, in
+ways worth naming precisely because the earlier sections describe them
+abstractly:
+
+**The word, not the height.** The first draft of the comment said
+"the same shape as 10.283's defect" and named the list by the name the
+code uses. That name sits on **line 1569** of this file, and
+`docs/BOARD.md:64` [obs: 9220268] cites `:1569` of `tools/AUDIT.md` — the line holds
+the span `CMakeLists.txt`, which this file's line 1569 also carries, so
+the edit made this file a **second holder** of that reference:
+`ambiguous delta +1` against a ceiling of `0`. The prose had to stop
+naming the word. Nothing about the height was involved.
+
+**The height, and how it was found.** The comment also grew the file
+by sixteen lines (2937 → 2953), and `docs/BOARD.md:64` [obs: 9220268]'s `:2205` lost
+its holder — `unanchored` went 562 → 563. Compressing the comment until
+the readings were back where the round started brought the file to 2947
+and the reading to 562. This is the same mechanism §10.283 measured,
+and the round shows the measurement is reproducible: put a nine-line
+pad at the **end** of the file and `unanchored` stays 562; put the same
+nine lines **in the middle** and it reads 563. The difference is which
+line lands on 2205, not how long the file is.
+
+**7. The numbers now.** `held` 618 (`own` 9, `borrowed` 65, `symbol`
+68, `picked up` 476), `unanchored` 562, `explicit` 185, and all four
+pins where the round started: `explicit delta +12 (expect +12)`,
+`unanchored delta -3 (ceiling +0)`, `coincidental delta +0`, `ambiguous
+delta +0`. `--self-check` reports `ok (6 checks)`. The per-grade
+section now prints four headers whose counts sum to 618.
+
+**8. What this round does not settle.**
+
+**The census is still unpinned**, and so is `out_of_range`, and so is
+this per-grade count. That is now four readings that print and are
+never asserted, and §10.283 named three of them as separate debts. They
+are one debt: a report whose numbers are printed but not compared is a
+report whose numbers a future edit can move silently. The cells this
+round and the last two added catch *the branch*, not the *value*.
+
+**The `symbol` grade's own definition is untested at the report level.**
+This round makes the report show two `symbol` rows; it does not check
+that those two rows are `symbol` for the reason the docstring gives.
+`check_symbol_grade` and `check_symbol_must_be_a_name` cover the grading
+rule, so the gap is narrow — but the report's examples are now evidence
+the gate prints and nothing reads.
+
+**Still unmeasured: whether any `--report` output is quoted in `docs/`.**
+Making this change moved nothing, which suggests not, but "nothing moved"
+is not the same measurement as "nothing quotes it", and this round did
+not run the second one.
