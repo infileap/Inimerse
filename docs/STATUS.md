@@ -21292,3 +21292,149 @@ and `check_symbol_must_be_a_name` cover the grading rule at the fixture
 level, so the gap is narrow — but the identity would be satisfied by a
 `symbol` rule that fired correctly and a report that printed it
 correctly, which is not the same as the rule being right.
+
+## §10.288 — a number no file could have is not an address
+
+**1. Where this round starts.** A number in the out-of-range report
+had been visible for several rounds and never looked at:
+
+```
+docs/STATUS.md:1011` [obs: e58c9494], the line carrying
+`"expires":1790919002`:  :1790919002 (tools/gate.sh) is past the end of
+that file (1483 line(s))
+```
+
+`tools/gate.sh` is 1482 lines long, so the sentence is true. It is
+also beside the point. The number is not a line reference at all: the
+citing line quotes a JSON response body,
+`"expires":1790919002`, and the position rule — *the last tracked
+file named before the number* — attributed it to a `tools/gate.sh`
+mentioned 407 characters earlier on the same line.
+
+**2. Two things this round measured before changing anything.**
+
+**Distance cannot be the discriminator.** The obvious repair is "a
+number that far from its owner is not a reference". Measured over the
+1187 graded references, the distance from the owning mention to the
+number has median 6, p90 211, and **a maximum of 2515** — a legitimate
+citation of `tools/gate.sh` in `docs/BOARD.md`. A distance rule would
+cut real references before it cut this one.
+
+**A size bound can be.** No number larger than the longest file in the
+tree can be a line number in that tree. That bound is a property of the
+tree, not a constant — the longest file grew from 21503 to 26140
+between `1c6b338` and today — so it is read, not written down.
+
+**3. The rule, and what it moves.** A number above the bound is
+counted, never graded. Over the whole tree, thirteen numbers qualify,
+and each was inspected rather than assumed:
+
+| what the number is | where |
+| --- | --- |
+| file hashes `2096:109485`, `:109469`, `:109699`, `:107086` | AUDIT |
+| an explicitly impossible `:99999` used as an example | DECFY_DESIGN |
+| byte counts `65536`, `66560` in JSON bodies | STATUS |
+| epochs `1790919002`, `1790923420` in JSON bodies | STATUS |
+
+None is a reference to a line in this tree. One of them — the epoch —
+was entering **two** buckets: `out_of_range` (as a line that does not
+exist) and the unanchored ratchet (as a number nothing holds). Both
+were wrong for the same reason.
+
+**4. The partition grows a fourth group.** §10.285 made the census a
+partition with an identity, `target + unguarded + unnamed ==
+walked`. A number that cannot be a line number belongs to none of the
+three, so it becomes a fourth group and the identity includes it:
+
+```
+1198 + 3940 + 1066 + 13 == 6217
+```
+
+The coverage sentence now states the group and the bound it rests on,
+so a reader sees `13 number(s) exceed the longest file in the tree
+(26140 line(s))` rather than an unexplained gap.
+
+**5. Three things went wrong, and all three are the same shape as
+§10.283–287.**
+
+**The first bound was computed over the wrong set.** It read
+`docs/ + TARGETS` — the files this scan cites *from* — when the claim
+is about the whole tree. Inside a seven-line fixture that produced a
+bound of `7`, so every fixture number became "impossible" and four
+cells went red. The bound now reads every tracked path, and the
+fixtures carry a 4000-line file so that a number like `:99` can be
+past the end of *its own* file while still existing somewhere — which
+is what those cells are actually about.
+
+**The bound's first implementation read a path the base tree does not
+carry**, and `lines()` refuses rather than guessing, so the base scan
+exited. A bound must not turn "this ref has one fewer file" into "no
+number is possible".
+
+**The first guard cell could not fail.** It asserted that no *graded*
+citation exceeds the bound — but the grading loop now skips exactly
+those numbers, so `citations` can never contain one. Reading it as
+coverage would have been worse than having no cell:
+
+```
+_over = [x for x in r["citations"] if x[1] > r["max_lines"]]   # always []
+```
+
+It is replaced by a cell over the **out-of-range bucket**, which is
+where the defect actually appeared, and the control reds it by name:
+
+```
+cause=out-of-range-holds-a-number-no-file-could-have
+  1 row(s) in the out-of-range bucket cite a number larger than the
+  longest file in the tree (26140): docs/STATUS.md cites :1790919002
+  of tools/gate.sh
+```
+
+That is the fourth consecutive round in which a cell I wrote passed or
+failed its control for a reason unrelated to its purpose. §10.283
+(equal numbers on both sides), §10.286 (`:99`/`:3` out of range under
+either operator), §10.287 (a fixture that could not produce the grade
+whose deletion it existed to catch), and this one (a predicate that is
+empty by construction). The pattern is now specific enough to be a
+rule: **before trusting a cell, check that its predicate can be true.**
+
+**6. The numbers now.** `held` 618, `unanchored` 562, `explicit` 185,
+out of range 39 (18 held by another file, 21 held by nothing),
+`walked` 6217, impossible 13. Three of the four pins are exactly
+where they were; **`unanchored delta` moved from `-3` to `-2` and that
+is correct, not drift** — the new rule runs on the base tree too, where
+it reclassifies one number, so the base count falls 565 → 564 while
+this tree's stays 562. A delta is a difference, and changing a rule
+changes both ends of it. This is the one place in this report where a
+pin *should* move, and the reading is consistent with itself:
+`562 - 564 = -2`. `VERDICT|
+assertions=0|...|measured_cells=20`. The suite is twenty-eight cells;
+`--self-check` reports `ok (6 checks)`.
+
+**The citation count moved 1199 → 1198 and the removal is receipted**
+in `tools/citations.exempt.json`, as the checker requires: it says
+which address, why it was never a citation, and `allowed` equals the
+count actually removed. A pin that forbids removals is right to force
+this — the alternative is a silent shrink that reads like tidying.
+
+**7. What this round does not settle.**
+
+**"Larger than the longest file" is a sufficient condition, not the
+only one.** A number that is small enough to exist somewhere but was
+never meant as a reference — `"size":64` in a JSON body, a date like
+`:2026` — still passes the bound and is still graded if the line names
+a target. The rule catches the egregious cases; it does not catch the
+category. Measured today: zero such rows reach the buckets, so this is
+a statement about the rule's reach, not a present defect.
+
+**The thirteen are counted as one group but are three kinds.** An
+epoch, a byte count and a hash are not the same failure of the position
+rule, and nothing in the report separates them. The group answers "how
+many numbers cannot be line numbers here", which is the coverage
+question; it does not answer "why did the position rule take each one".
+
+**The rule now depends on a full tree walk.** `_max_lines` reads every
+tracked path on every run. It is guarded against refs that lack one,
+but it is a second whole-tree read beside the digest's, and the two are
+not shared. Whether that is worth unifying is a performance question
+this round did not measure.
