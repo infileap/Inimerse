@@ -201,6 +201,12 @@ def selftest() -> int:
         ("a placeholder whose bound is a file length",
          "<N> number(s) exceed the longest file in the tree (26140 line(s))",
          False),
+        # A table cell quoting the value inside a span that opens on the SAME
+        # line.  The carried state is False while the match is still inside the
+        # span, so a unification that only checked the carried state flagged
+        # this -- measured when scan() and the self-test were merged.
+        ("a value quoted inline in a table cell",
+         "| the plain value (`walked past 6238`) | 1 | 1 |", False),
     ]
     for label, line, want in cases:
         # The transcript case opens its span on the same line, so compute the
@@ -238,6 +244,16 @@ def _digits_beside_placeholder(line: str) -> bool:
     return False
 
 
+def _position_in_span(line: str, pos: int) -> bool:
+    """True when `pos` sits after a code span opened on THIS line.
+
+    A transcript quoted inline opens and closes on one line, so the carried
+    state is False while the match is still inside the span.
+    """
+    opened = line.rfind("`", 0, pos)
+    return opened >= 0 and line.count("`", 0, pos) % 2 == 1
+
+
 def _violation_key(line: str, in_span: bool = False) -> "str | None":
     """Which count this line states as a number, or None.
 
@@ -257,7 +273,7 @@ def _violation_key(line: str, in_span: bool = False) -> "str | None":
             return None
         if PLACEHOLDER.search(line) and not _digits_beside_placeholder(line):
             return None
-        if in_span:
+        if in_span or _position_in_span(line, m.start()):
             return None
         return key
     return None

@@ -21699,3 +21699,99 @@ new checker flagged a line that stated a count without naming its
 tree. The marker was correct to require it — the number *was* read on
 `4b5065fc` and that fact had been left in the sentence as though it
 applied here.
+
+## §10.291 — a placeholder is not a licence to keep the value
+
+**1. Where this round starts.** §10.290 §7 named an evasion in the
+checker it had just written, and left it:
+
+> *"A line can pass by carrying a placeholder while the sentence around
+> it still asserts a specific value — `about N number(s), actually 26`.
+> The exemptions are lexical and a writer who wants to state a moving
+> number without a marker can still do so."*
+
+That is a self-criticism, which is worth little without a measurement.
+Measured before touching anything:
+
+```
+False   the scan walked past N number(s), actually 6238.
+False   the scan walked past N number(s) (6238 today).
+False   <N> number(s) exceed the longest file in the tree (<B> line(s))
+False   <N> number(s) exceed the longest file in the tree (26140 line(s))
+```
+
+All four pass. The first two should not — they keep the value and add a
+slot. The last two should.
+
+**2. Three defects, and the fourth that hid them.**
+
+**The phrase never matched the placeholder form.** `\bwalked\s+(past\s+)?\d`
+requires a **digit** after the verb, so a line written with `N` — the
+exact form the checker exists to bless — did not contain the phrase at
+all. The evasion did not need the placeholder exemption; the phrase
+itself could not see it.
+
+**A placeholder exempted the whole line.** `if PLACEHOLDER.search(line)`
+returned "clean" before the digit question was asked. It now exempts
+only when no concrete digit shares the line.
+
+**`CONCRETE` matched a bare comma.** The pattern was `[\d,]{1,12}`, so
+`(B line(s))` — a line with no digit in it at all — read as "carries a
+value", and the legitimate bound form was flagged as a violation.
+
+**And the defect that made all three invisible:** `scan()` and
+`_line_violates()` were **two copies of the same decision**. The
+self-test drove one; the real run drove the other. After fixing the
+copy the self-test used, ten cases passed and the real run reported
+`0 violations` on a document containing a violation:
+
+```
+_line_violates('The scan walked past N number(s), actually 6238 ...') -> True
+scan(['docs/STATUS.md'])                                              -> 0 violations
+```
+
+There is now one function, `_violation_key`, and both call it. This is
+§10.283's defect one level up — a rule living in two places, with the
+copy nobody runs being the one that was fixed.
+
+**3. The controls, three ways.**
+
+| input | rc | want |
+| --- | --- | --- |
+| the evasion (`N …, actually 6238`) | 1 | 1 |
+| the plain value (`walked past 6238`) | 1 | 1 |
+| the clean tree | 0 | 0 |
+
+The self-test grows 7 → 11 cases: the evasion, the value-in-parentheses
+form, **the legitimate bound** so the fix cannot degenerate into "always
+red", and a value quoted inline in a table cell — that last one because
+the merge into a single function dropped the test that asks whether the
+match sits inside a span opened on the **same** line, and this section's
+own control table was flagged by the omission.
+
+**4. The numbers now.** The checker reports `0 violation(s)` with
+`10/10` self-test cases on this tree. `held` 618, `unanchored` 562,
+`explicit` 185, all four pins unmoved; `ctest 234`, `recon` `PASS`.
+No document changed in this round, so no pin moved and no citation was
+touched.
+
+**5. What this round does not settle.**
+
+**The remaining escape is still lexical.** A writer can put the value
+inside a code span and call it a transcript — which is what a
+transcript is, so the exemption is right, and it is also the hole. The
+checker reads shape, not intent, and no amount of pattern work answers
+"did the author mean this as a claim".
+
+**Three of the three defects were in the checker, not the documents.**
+That is worth stating plainly: §10.290 added a tool, and the tool was
+wrong in three ways plus one structural defect, all found by running
+it against inputs whose answer was known. A checker shipped without
+those controls would have reported green forever.
+
+**`_violation_key` is still one function with a growing list of
+exemptions**, and each exemption is a line somebody may later widen.
+The self-test now has a case per exemption, which is the discipline
+that keeps widening visible — but it is a discipline, not a
+derivation, and §10.290 already recorded the cost of a discipline
+without an executor.
