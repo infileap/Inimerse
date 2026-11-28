@@ -21326,8 +21326,28 @@ tree, not a constant — the longest file grew from 21503 to 26140
 between `1c6b338` and today — so it is read, not written down.
 
 **3. The rule, and what it moves.** A number above the bound is
-counted, never graded. Over the whole tree, thirteen numbers qualify,
-and each was inspected rather than assumed:
+counted, never graded. **The count in this paragraph is not a number on the tree you are
+reading, and it cannot be one.** It moves every time this section is
+edited, because the section quotes the very numbers it classifies:
+writing `:109485`, `:99999`, `1790919002` into prose adds numbers the
+rule then has to classify. Measured, on three trees:
+
+| tree | numbers above the bound | walked |
+| --- | --- | --- |
+| `4b5065fc` (the rule, no section) | 13 | 6217 |
+| `9e2055f8` (the section written) | 22 | 6232 |
+| this tree | see the command below | — |
+
+All three are correct for their tree, and the difference is the prose
+between them. So the reading is not written down here; the command is:
+`python3 tools/check_line_refs.py` prints
+`coverage -- … N number(s) exceed the longest file in the tree (B line(s))`,
+and that line is the only copy of `N` in this repository. The numbers
+this section *can* state are the ones that do not move when it is
+written: on every one of those trees the thirteen original rows are the
+same thirteen, and none of them is a reference to a line.
+
+Those thirteen were each inspected rather than assumed:
 
 | what the number is | where |
 | --- | --- |
@@ -21351,7 +21371,7 @@ three, so it becomes a fourth group and the identity includes it:
 ```
 
 The coverage sentence now states the group and the bound it rests on,
-so a reader sees `13 number(s) exceed the longest file in the tree
+so a reader sees `22 number(s) exceed the longest file in the tree
 (26140 line(s))` rather than an unexplained gap.
 
 **5. Three things went wrong, and all three are the same shape as
@@ -21400,7 +21420,10 @@ rule: **before trusting a cell, check that its predicate can be true.**
 
 **6. The numbers now.** `held` 618, `unanchored` 562, `explicit` 185,
 out of range 39 (18 held by another file, 21 held by nothing),
-`walked` 6217, impossible 13. Three of the four pins are exactly
+`walked` and `impossible` are **not stated here** — both move as this
+section is edited, for the reason §3 gives, and the command printed by
+`python3 tools/check_line_refs.py` is their only copy.
+Three of the four pins are exactly
 where they were; **`unanchored delta` moved from `-3` to `-2` and that
 is correct, not drift** — the new rule runs on the base tree too, where
 it reclassifies one number, so the base count falls 565 → 564 while
@@ -21427,7 +21450,7 @@ a target. The rule catches the egregious cases; it does not catch the
 category. Measured today: zero such rows reach the buckets, so this is
 a statement about the rule's reach, not a present defect.
 
-**The thirteen are counted as one group but are three kinds.** An
+**The group is counted as one but its rows are several kinds.** An
 epoch, a byte count and a hash are not the same failure of the position
 rule, and nothing in the report separates them. The group answers "how
 many numbers cannot be line numbers here", which is the coverage
@@ -21438,3 +21461,123 @@ tracked path on every run. It is guarded against refs that lack one,
 but it is a second whole-tree read beside the digest's, and the two are
 not shared. Whether that is worth unifying is a performance question
 this round did not measure.
+
+## §10.289 — the number that changes as you write it
+
+**1. Where this round starts.** §10.288 §7 left three items open. The
+first was checked and closed as written: *"a number small enough to
+exist somewhere but never meant as a reference — `"size":64`, `:2026` —
+still passes the bound"*. Measured over every graded reference on this
+tree: **zero** rows have a JSON-member shape in front of them, so the
+sentence was about the rule's reach and there was nothing to fix.
+
+The second item was the one with teeth, and it turned out to be about
+§10.288 itself rather than about the thirteen rows.
+
+**2. Two numbers in §10.288 were already wrong when written.** The
+section states `walked` 6217 and `impossible 13`. Reading the tree the
+section was committed into:
+
+| claim | §10.288 says | that tree reads |
+| --- | --- | --- |
+| `walked` | 6217 | **6232** |
+| `impossible` | 13 | **22** |
+| `held` / `unanchored` / `explicit` / `out of range` | 618 / 562 / 185 / 39 | same |
+
+The four that agree are properties of the citations; the two that
+disagree are properties of **the text of the section describing them**.
+§10.288 quotes `:109485`, `:99999`, `1790919002` and `1790923420` in a
+table, and each of those is a number above the bound, so the act of
+writing the table added nine rows to the group the table describes.
+
+**3. Neither reading is wrong, and that is the point.** Measured on
+each commit's own tree:
+
+| tree | numbers above the bound | walked |
+| --- | --- | --- |
+| `4b5065fc` (the rule, before any prose) | 13 | 6217 |
+| `9e2055f8` (the section written) | 22 | 6232 |
+| any tree after that | larger, and different on every edit | — |
+
+The third row has no number because **writing it changed it**: the
+first draft of this table said 24, and by the time the row was typed
+the tree read 26 — this section's own prose about epochs and hashes
+added two more. That is §3's table being wrong in exactly the way §3
+describes, caught inside the round that describes it. The command is
+the copy: `python3 tools/check_line_refs.py` prints
+`N number(s) exceed the longest file in the tree`.
+
+`13` and `6217` are **correct for `4b5065fc`**. They became wrong the
+moment they were written down, and then wrong again the moment the
+correction was written down — the first correction here said `22`, and
+by then the tree read `24`.
+
+This is the same class of error this file has recorded four times
+(§1.74 E: *the number was right when it was written and then the thing
+being measured moved*, and §10.282's near-miss where twenty-seven lines
+of prose moved a citation onto a comment about itself). The difference
+is that here **the writer is the mover**: there is no external edit to
+blame and no moment at which a stale number could be caught by
+re-reading, because re-reading is what changes it.
+
+**4. The repair is to stop writing the number down.** §10.288 now
+carries the three-tree table above and, instead of a count of the
+current tree, the command that prints it. The rule adopted here:
+
+> A reading moves when you write it → write the command, not the
+> number. A reading is stable under its own description → write the
+> number.
+
+`held`, `unanchored`, `explicit`, `out of range` are stable under this
+section's prose: they count citations, and a citation in prose is a
+citation whether the sentence around it is new or old. `impossible` and
+`walked` are not, because the prose itself contains the inputs.
+
+**5. And the group gets the assertion it lacked.** A number that
+cannot be pinned can still be checked against its evidence. The rows
+are now collected **where the exclusion is applied** — not recomputed
+from the bound afterwards, which would be arithmetic checking itself —
+and the cell compares the counter with the rows it counted:
+
+```
+control 1: counter incremented without a matching row
+  cause=impossible-group-contradicts-its-rule
+  47520 number(s) were filed as too large to be a line number, but the
+  rows that were set aside number 24
+
+control 2: rows not collected
+  24 number(s) were filed ... but the rows that were set aside number 0
+```
+
+Both controls red **that cell** and name both sides. `measured_cells`
+went 20 → 21.
+
+**6. The numbers this section can state.** `held` 618, `unanchored`
+562, `explicit` 185, out of range 39 (18 held by another file, 21 held
+by nothing), all four pins unmoved — `explicit delta +12 (expect +12)`,
+`unanchored delta -2 (ceiling +0)`, `coincidental delta +0`, `ambiguous
+delta +0`. The suite is unchanged in cell count; `--self-check` reports
+`ok (6 checks)`.
+
+**7. What this round does not settle.**
+
+**Nothing enforces §4's rule.** "Write the command, not the number"
+is a discipline, and this repository has paid for disciplines before:
+the fix is a checker that reads each claimed number back from the tree,
+which is what `tools/check_reconciliation.py` does for the six tokens
+in §14 of the board. Those six are the ones somebody chose to
+reconcile; a number in a status section is not among them, and nothing
+would notice if the next section quotes a reading that moves.
+
+**The other two open items from §10.288 are untouched.** The group is
+still counted as one while its rows are several kinds (an epoch, a byte
+count, a hash), and nothing in the report separates them; and
+`_max_lines` still walks the whole tree beside the digest's own walk,
+unshared, which is a performance question nobody has measured.
+
+**The three-tree table is itself a reading.** It is stable under this
+section because the three commits are fixed, but `this tree` is not a
+commit — it is whatever tree the reader has, and the table says 24 for
+a number that will move again on the next edit of any section that
+quotes an epoch. The row is labelled, which is the most a moving
+reading can honestly be.
