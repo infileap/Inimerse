@@ -1982,6 +1982,15 @@ set_tests_properties(self_referential_counts_selfcheck_regression PROPERTIES WOR
 add_test(NAME self_ref_mutation_audit_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/self_ref_mutation_audit.py --report)
 set_tests_properties(self_ref_mutation_audit_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "docs;regression")
+# A self-test that runs no cases reports success by arithmetic.  Measured
+# 2026-11-28: six checkers had that shape, two of them while already printing a
+# case count -- so this looks at the exit code, not the output.
+add_test(NAME empty_suites_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_empty_suites.py --report)
+set_tests_properties(empty_suites_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "docs;regression")
+add_test(NAME empty_suites_selfcheck_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "check_empty_suites --self-test: ok \\([0-9]+ cases\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_empty_suites.py --self-test)
+set_tests_properties(empty_suites_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "docs;regression")
 # The ledger arithmetic and the two parsers, on inputs whose answer is known --
 # including the ones the ledger has to reject.  No build output, no corpus.
 add_test(NAME aot_mir_cover_selfcheck_regression

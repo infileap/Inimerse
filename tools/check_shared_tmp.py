@@ -306,15 +306,19 @@ def run_selftest():
         if is_red == "yes":
             red += 1
         print(f"SHARED-TMP-SELFTEST|case={name}|want={want}|got={got}|red={is_red}")
+    ok = red == 0 and len(SELFTEST_CASES) > 0
+    if not SELFTEST_CASES:
+        print("SHARED-TMP-SELFTEST: the case table is empty, so a suite that "
+              "runs none reports success by arithmetic (docs/STATUS.md 10.294)")
     print(f"SHARED-TMP-SELFTEST-VERDICT|cases={len(SELFTEST_CASES)}|red={red}|"
-          f"verdict={'PASS' if red == 0 else 'FAIL'}")
+          f"verdict={'PASS' if ok else 'FAIL'}")
     return red, len(SELFTEST_CASES)
 
 
 def main():
     if "--self-test" in sys.argv[1:]:
         red, total = run_selftest()
-        return 0 if red == 0 else 1
+        return 0 if (red == 0 and total > 0) else 1
 
     # --root so the two directions can be shown without editing the tree the
     # stage is about: a copy carrying one shared path must be red, and this
