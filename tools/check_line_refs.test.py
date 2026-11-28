@@ -1481,6 +1481,7 @@ def main() -> int:
     failures += check_every_grade_has_a_report_line()
     failures += check_census_partition_is_an_identity()
     failures += check_out_of_range_rows_fit_their_rule()
+    failures += check_grade_counters_match_their_rows()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
@@ -2196,6 +2197,68 @@ def check_out_of_range_rows_fit_their_rule() -> int:
         print("check_line_refs.test.py: FAIL oor/inside -- `:3` and `:7` of a "
               "seven-line file are both inside it and must not be called out "
               f"of range: {[x[2] for x in rows]!r}")
+    return failures
+
+
+# --- cell: the four grade counters match the rows they count ------------
+#
+# The grade counters are printed on every run and were compared by nothing.
+# Their sum is `held`, which other cells cover -- so a grade moving between two
+# of them is invisible, and that was measured: deleting the `symbol` branch
+# took the grade 68 -> 0, moved `picked up` 476 -> 544, and left
+# VERDICT|assertions=0 with no cell red.  A pinned count would age on every
+# docs/ edit; the identity does not, and it binds the counter to the evidence
+# the report prints:
+#
+#   sum(own, borrowed, symbol, picked up) == held
+#   each counter == the number of held_rows carrying that grade
+#
+# The second is the one with teeth.  A fixture can reach `own` and
+# `picked up`; the others are covered by the identity over whatever the
+# fixture does produce, plus the set property that GRADES names them all.
+# The fixture has to be able to produce the grade whose disappearance this
+# cell claims to catch.  A first version reused a prose-only fixture, which can
+# only reach `borrowed` and `picked up` -- so deleting the `symbol` branch
+# changed nothing it could see and the control passed.  This is CODE_OWNER,
+# which the `symbol` cell above already uses to reach that grade, plus a
+# TARGET citation so the fixture is not single-grade.
+grade_DOC = "docs/fix/grades2.md"
+grade_DOC_TEXT = (
+    "# fixture\n"
+    "\n"
+    "`tools/gate.sh` names `deep_word` at `:3`, and `src/fix/vm.c` names "
+    "`builtin_lookup` at `:4`.\n"
+)
+
+
+def check_grade_counters_match_their_rows() -> int:
+    """Each grade counter equals the rows carrying it; their sum equals held."""
+    failures = 0
+    r = scan_with({grade_DOC: grade_DOC_TEXT, "tools/gate.sh": cnt_OTHER_TEXT,
+                   CODE_OWNER: CODE_OWNER_TEXT})
+    counts = {
+        "own": r["held_own"], "borrowed": r["held_borrowed"],
+        "symbol": r["held_symbol"], "picked up": r["held_picked"],
+    }
+    total = sum(counts.values())
+    if total != r["held"]:
+        failures += 1
+        print("check_line_refs.test.py: FAIL grades/sum -- the counters sum to "
+              f"{total} ({counts}) but `held` says {r['held']}")
+    for g in C.GRADES:
+        rows = len([x for x in r["held_rows"] if x[4] == g])
+        if counts.get(g, 0) != rows:
+            failures += 1
+            print(f"check_line_refs.test.py: FAIL grades/{g} -- the counter "
+                  f"said {counts.get(g, 0)} and {rows} row(s) carry that grade")
+    # A fixture that reaches one grade cannot see another vanish.  This is the
+    # assertion that keeps the cell from passing for the wrong reason.
+    reached = {x[4] for x in r["held_rows"]}
+    if "symbol" not in reached:
+        failures += 1
+        print("check_line_refs.test.py: FAIL grades/reach -- the fixture must "
+              "produce a `symbol` row, or this cell cannot see that grade's "
+              f"branch disappear; it produced {sorted(reached)}")
     return failures
 
 

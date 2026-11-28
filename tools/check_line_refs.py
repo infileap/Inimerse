@@ -2341,6 +2341,46 @@ def main() -> int:
     # cell stayed green while the bucket was wrong, which is the exact
     # mutation 10.282 named as unfixed.
     _oor_bad = [x for x in r["out_of_range"] if not x[2] > x[4]]
+    # The four grade counters are printed on every run and were compared by
+    # nothing: their sum is `held`, which other cells cover, so a grade moving
+    # between two of them is invisible.  Measured 2026-11-28: deleting the
+    # `symbol` branch took that grade 68 -> 0 and moved `picked up` 476 -> 544
+    # with VERDICT|assertions=0 and no cell red.  Two identities, neither
+    # needing a pin: the four must sum to `held`, and each must equal the rows
+    # it counts.  The second is the one that matters -- it binds the counter to
+    # the evidence the report prints, so a counter can be wrong only if the
+    # rows are wrong the same way.
+    _grade_rows = {
+        g: len([x for x in r["held_rows"] if x[4] == g]) for g in GRADES
+    }
+    _grade_counts = {
+        "own": r["held_own"], "borrowed": r["held_borrowed"],
+        "symbol": r["held_symbol"], "picked up": r["held_picked"],
+    }
+    _grade_sum = sum(_grade_counts.values())
+    cell(
+        "grade-sum-broken",
+        needs_inputs,
+        None if _grade_sum == r["held"] else
+        f"the four grade counters sum to {_grade_sum} ({_grade_counts}) but "
+        f"`held` says {r['held']}; a grade moved between two buckets or a "
+        "reference is held and ungraded",
+    )
+    _grade_drift = sorted(
+        g for g in GRADES if _grade_counts.get(g, 0) != _grade_rows[g]
+    )
+    cell(
+        "grade-counter-drift",
+        needs_inputs,
+        None if not _grade_drift else
+        f"the grade counter and the rows it counts disagree for "
+        + ", ".join(
+            f"{g!r} ({_grade_counts.get(g, 0)} counted vs {_grade_rows[g]} rows)"
+            for g in _grade_drift
+        )
+        + "; the report prints both, so one of them is not the evidence it "
+        "claims to be",
+    )
     cell(
         "out-of-range-rule-broken",
         needs_inputs,
