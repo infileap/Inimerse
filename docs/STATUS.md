@@ -21036,3 +21036,145 @@ it.
 existing cells, so a grade moving between two of them is invisible.
 §10.284 made the report *show* all four; this round did not make anyone
 *compare* them.
+
+## §10.286 — the bucket that held rows its own rule excludes
+
+**1. Where this round starts.** Four consecutive rounds ended by naming
+the same unfixed reading. §10.282 measured that `out_of_range` was
+printed and never asserted, and wrote: *"a future change that alters the
+rule in a subtler way — say, an off-by-one in `number >
+len(owner_lines)` — would move the number and nothing would notice."*
+§10.283 repeated it as one of three unpinned buckets, §10.284 collapsed
+the three into "one debt", and §10.285 paid the census half and said
+explicitly that this half was still open. This round does what §10.282
+predicted rather than what it recommended.
+
+**2. The predicted mutation, run.** The rule is one expression:
+
+```
+_past_end = bool(owner_lines and number > len(owner_lines))
+```
+
+Changing `>` to `>=` is the smallest edit that can be wrong:
+
+| reading | before | after `>=` |
+| --- | --- | --- |
+| out of range | 40 | **48** |
+| `oor_held` | 19 | 27 |
+| `oor_bare` | 21 | 21 |
+| `VERDICT|assertions` | 0 | **0** |
+
+The bucket moved by eight rows and the checker reported nothing. Every
+pinned delta was where it started, because no pin and no cell read this
+bucket. That is §10.282's sentence, demonstrated rather than restated.
+
+**3. Why a pin is the wrong instrument here, again.** The obvious
+repair — pin the count — has the defect §10.285 measured for the
+census: the number moves on every ordinary edit to `docs/`, so the pin
+would have to be re-taken by whoever edits a document, and after the
+re-taking it would describe only the tree it was re-taken on. So the
+assertion is about the **rule**, and it can be made because each row
+already carries what the rule needs:
+
+```
+(rel, lineno, number, owner, size)
+```
+
+`size` is `len(owner_lines)` — the row states how long the file it
+cites is, and it states the number. So the rule that put the row there
+is checkable row by row: **every row must have `number > size`.** No
+base tree, no clock, no re-taking; true on every tree, and false
+exactly when the rule and its rows disagree.
+
+A second cell covers the bucket's own split: `oor_held + oor_bare` must
+equal the bucket length. That one is an identity for the same reason
+§10.285's census partition is, and it is what a future edit to the
+`hits` branch would break.
+
+**4. What the controls show.**
+
+```
+control 1: `>` -> `>=` in the rule
+  VERDICT|assertions=1|causes=1|...|cause=out-of-range-rule-broken
+  8 row(s) in the out-of-range bucket do not satisfy the rule that put them
+  there: docs/RELEASE_0.5.2.md:74 [obs: 1a559723] cites :25 of
+  build_installer.ps1, which the row says has 25 line(s).
+
+control 2: the split loses its `else`
+  VERDICT|assertions=1|causes=1|...|cause=out-of-range-split-broken
+  the out-of-range split does not add up: 18 held by another file + 0 held by
+  nothing = 18, but the bucket holds 40 row(s)
+```
+
+Both name the row or the arithmetic rather than a bare count. The
+suite is now twenty-seven cells; `measured_cells` went 14 → 16.
+
+**5. The cell was blind to the mutation it was written for, and that is
+the round's most useful finding.** The first version of
+`check_out_of_range_rows_fit_their_rule` used a fixture citing `:99`
+and `:3` against a seven-line file. Under `>` the bucket holds `:99`.
+Under `>=` the bucket **also** holds `:99` — and `:3` is in range under
+both. So the off-by-one changed nothing the cell could see, the cell
+passed, and only three unrelated cells failed under the control. A cell
+written to catch a boundary error must put a number **on** the
+boundary.
+
+The fixture now also cites `:7` — the last real line of a seven-line
+file, in range under `>` and out of range under `>=`. With that the
+control reds the intended cell:
+
+```
+FAIL oor/rule-count -- one of the two numbers (`:99`) is past the end of a
+seven-line file and the other (`:3`) is not; the bucket has 2 row(s) for this
+document: [('docs/fix/oor-rule.md', 3, 99, 'CMakeLists.txt', 7),
+            ('docs/fix/oor-rule.md', 5, 7, 'CMakeLists.txt', 7)]
+```
+
+This is the second round in a row where a cell passed its own reverse
+control for a reason unrelated to its purpose (§10.283's first census
+cell had the same defect: equal numbers on both sides). The pattern is
+worth stating as a rule: **a cell's control must fail *at the cell*,
+not merely somewhere in the run** — a control observed only as "seven
+cells went red" does not say the eighth would have.
+
+**6. The numbers now.** `held` 618, `unanchored` 562, `explicit` 185,
+`out of range` 40 (19 held by another file, 21 held by nothing),
+`walked_numbers` 6201, all four pins where the round started
+(`explicit delta +12`, `unanchored delta -3`, `coincidental delta +0`,
+`ambiguous delta +0`). `VERDICT|assertions=0|...|measured_cells=16`.
+
+**The file grew by 31 lines and no reading moved, which was checked
+rather than assumed.** Line 2205 of this checker is
+`strict = "--strict" in args` and `docs/BOARD.md:64` [obs: 318bb451] carries the span
+`--strict`, so that line holds a reference and moving it moves
+`unanchored`. This round's additions are all inside `main()` below
+line 2205, so `--strict` is still on 2205 and the reading is unmoved —
+`git show HEAD:...` and the working file were compared for the line
+position, not the reading alone.
+
+**7. What this round does not settle.**
+
+**The rule's converse is still not asserted.** The cells check that
+every row in the bucket satisfies `number > size`. They do not check
+the other direction: that every graded reference whose owner has no
+line N *is* in the bucket. That is a stronger property and it needs the
+full scan, not the rows — a reference silently dropped from the bucket
+would leave both new cells green. §10.283 raised the same asymmetry for
+the unanchored list and it is unresolved here too.
+
+**`held_own` / `held_borrowed` / `held_symbol` / `held_picked` are
+still unpinned individually.** §10.284 made the report show all four;
+two rounds later nobody compares them. Their sum is `held`, which is
+covered, so a grade moving between two of them is invisible. That is
+now the last reading in this report with no assertion of any kind.
+
+**Eight rows of the current bucket name a file the row itself says is
+long enough.** Under the correct rule they are out of range; the
+control above printed one of them (`docs/RELEASE_0.5.2.md:74` [obs: 1a559723] cites
+`:25` of `build_installer.ps1`, which has 25 lines). That row is
+**in** range under the correct rule — 25 ≤ 25 — so its presence in the
+bucket under `>=` is exactly right, and its absence under `>` is
+exactly right. The reading is consistent; what it reveals is that
+eight references sit one line past a file's end, which is a statement
+about `docs/` and not about the checker, and this round did not audit
+it.
