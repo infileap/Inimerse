@@ -652,6 +652,16 @@ EXP_LINE_REFS_AMBIGUOUS_DELTA_MAX = int(
 # exists to catch.
 WRITINGS = ("prefix", "prefix-range", "link+bare", "bare")
 
+# Every grade a held reference can have, in the order the receipt prints them.
+# ONE list read by two places -- the line that counts them and the --report
+# loop that shows a row for each.  It used to be two lists: the receipt named
+# `symbol`, the loop did not, so --report printed 9+65+476 = 550 rows of
+# categories under a header saying 618, and the 68 were a grade added to the
+# count and never to the report (docs/STATUS.md 10.283 and 10.282 both saw it
+# and both declined it).  Two lists that must agree, in one file, is the same
+# shape as the defect above: the question is not whether they agree today.
+GRADES = ("own", "borrowed", "symbol", "picked up")
+
 # A count of the citations themselves, and the one thing it forbids is a
 # DECREASE.  The two pins above bound growth (an explicit delta, a ceiling on
 # the unanchored delta) and hold one equality; a reference that simply
@@ -2683,7 +2693,7 @@ def main() -> int:
         # so that "own" is a claim a reader can check rather than a number this
         # report asks to be believed.  Two rows each, and two is enough: the
         # question is what a grade looks like, not how many there are.
-        for grade in ("own", "borrowed", "picked up"):
+        for grade in GRADES:
             rows = sorted(x for x in r["held_rows"] if x[4] == grade)
             print(f"  held, {grade}: {len(rows)} row(s); first two:")
             for rel, lineno, number, owner, _g, _h in rows[:2]:

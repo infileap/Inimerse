@@ -1478,6 +1478,7 @@ def main() -> int:
     failures += check_symbol_owner_must_be_code()
     failures += check_the_counts_are_read()
     failures += check_the_census_groups_are_distinct()
+    failures += check_every_grade_has_a_report_line()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
@@ -2016,6 +2017,67 @@ def check_the_census_groups_are_distinct() -> int:
               f"{r['unnamed_numbers']}.  Equal to unguarded_numbers "
               f"({r['unguarded_numbers']}) means the counter is reading the "
               "other group.")
+    return failures
+
+
+# --- cell: the report shows every grade it counts -----------------------
+#
+# `--report` prints two example rows under each grade, and the grade list it
+# walked was written by hand: `("own", "borrowed", "picked up")`.  A fourth
+# grade, `symbol`, was added to the counters three rounds before this cell and
+# the loop was not updated, so the report printed 9 + 65 + 476 = 550 worth of
+# categories under a header that said 618.  Nothing went red -- every number in
+# the report was true, the list was just short -- and two rounds recorded it and
+# declined to fix it because "it would move --report output that receipt-style
+# tests read".  Measured: no test in this repository reads that output, and
+# `git grep -c 'held, own'` finds nothing outside the checker.  A reason that
+# says "a test reads it" is checkable, and it was not true.
+#
+# The cell asserts a set property rather than a count: every grade the scan can
+# produce has a line in the report.  GRADES is the single list both places read,
+# so the cell also fails if a fifth grade is added to the counters and not to
+# GRADES.
+gr_DOC = "docs/fix/grades.md"
+gr_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`tools/gate.sh` carries `deep_word` at `:3`.",
+    ]
+) + "\n"
+gr_OTHER_TEXT = "\n".join(
+    ["#!/bin/bash", "# fixture", "the word deep_word sits here", "echo four"]
+) + "\n"
+
+
+def check_every_grade_has_a_report_line() -> int:
+    """GRADES covers every grade held_rows can carry, and the report walks it."""
+    failures = 0
+    produced = set()
+    r = scan_with({gr_DOC: gr_TEXT, "tools/gate.sh": gr_OTHER_TEXT})
+    produced |= {x[4] for x in r["held_rows"]}
+    # The fixture can only reach some grades; the rest are reachable in
+    # principle, so the assertion is over the names the counters publish.
+    published = {"own", "borrowed", "symbol", "picked up"}
+    missing = published - set(C.GRADES)
+    if missing:
+        failures += 1
+        print("check_line_refs.test.py: FAIL grades/list -- these grades are "
+              f"counted but not in GRADES: {sorted(missing)}")
+    extra = set(C.GRADES) - published
+    if extra:
+        failures += 1
+        print("check_line_refs.test.py: FAIL grades/stale -- GRADES names "
+              f"grades the scan cannot produce: {sorted(extra)}")
+    # The report loop must read GRADES and not a literal: a second hand-written
+    # list would satisfy the assertions above while reintroducing the defect.
+    import inspect
+    src = inspect.getsource(C.main)
+    if "for grade in GRADES" not in src:
+        failures += 1
+        print("check_line_refs.test.py: FAIL grades/loop -- --report no longer "
+              "walks GRADES; a hand-written list in its place is the defect "
+              "this cell exists for")
     return failures
 
 
