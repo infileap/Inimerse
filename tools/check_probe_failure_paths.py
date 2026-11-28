@@ -227,11 +227,16 @@ def self_test() -> int:
             % ("case" if ok else "RED", expected, verdict, "PASS" if ok else "FAIL")
         )
         print("     %s" % name)
+    ok = red == 0 and len(cases) > 0
+    if not cases:
+        print("PROBE-FAILPATH-SELFTEST: the case table is empty, so nothing was "
+              "measured; a suite that runs no cases reports success by "
+              "arithmetic (docs/STATUS.md 10.293)")
     print(
         "PROBE-FAILPATH-SELFTEST-VERDICT|cases=%d|red=%d|verdict=%s"
-        % (len(cases), red, "PASS" if red == 0 else "FAIL")
+        % (len(cases), red, "PASS" if ok else "FAIL")
     )
-    return 0 if red == 0 else 1
+    return 0 if ok else 1
 
 
 def main(argv: list[str]) -> int:

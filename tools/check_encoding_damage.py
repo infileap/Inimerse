@@ -242,7 +242,15 @@ def self_test() -> int:
         "a clean file is not reported",
     ):
         print("  ok   %s" % line)
-    print("check_encoding_damage: self-test OK")
+    if not cases:
+        print(
+            "check_encoding_damage: self-test FAILED -- no cases. A self-test "
+            "that runs none reports success by arithmetic alone "
+            "(docs/STATUS.md 10.293)",
+            file=sys.stderr,
+        )
+        return 1
+    print("check_encoding_damage: self-test OK (%d cases)" % len(cases))
     return 0
 
 

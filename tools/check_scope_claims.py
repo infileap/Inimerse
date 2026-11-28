@@ -275,7 +275,15 @@ def self_test() -> int:
         "an empty pattern has no witness",
     ):
         print("  ok   %s" % line)
-    print("check_scope_claims: self-test OK")
+    if not cases:
+        print(
+            "check_scope_claims: self-test FAILED -- no cases. A self-test "
+            "that runs none reports success by arithmetic alone "
+            "(docs/STATUS.md 10.293)",
+            file=sys.stderr,
+        )
+        return 1
+    print("check_scope_claims: self-test OK (%d cases)" % len(cases))
     return 0
 
 

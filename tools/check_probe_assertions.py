@@ -263,9 +263,18 @@ def self_test() -> int:
             print("FAIL -- a real assert() was not counted")
             failures += 1
 
+    # The `+ 2` is the two file-based assertions below the table, and it made
+    # an emptied `cases` report `cases=2 ... PASS` -- a count that was printed
+    # and could never be zero.  Both halves are named now.
+    total = len(cases) + 2
+    ok = failures == 0 and len(cases) > 0
+    if not cases:
+        print("PROBE-ASSERT-SELFTEST: the case table is empty, so only the two "
+              "file assertions ran; a suite that runs 2 of its checks reports "
+              "success by arithmetic (docs/STATUS.md 10.293)")
     print("PROBE-ASSERT-SELFTEST-VERDICT|cases=%d|red=%d|verdict=%s"
-          % (len(cases) + 2, failures, "PASS" if failures == 0 else "FAIL"))
-    return 0 if failures == 0 else 1
+          % (total, failures, "PASS" if ok else "FAIL"))
+    return 0 if ok else 1
 
 
 def main(argv: list[str]) -> int:
