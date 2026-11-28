@@ -56,13 +56,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SELF_REFERENTIAL_PHRASES = (
     (r"number\(s\)\s+exceed", "impossible_numbers"),
     (r"exceed\s+the\s+longest\s+file", "impossible_numbers"),
-    (r"\bwalked\s+(past\s+)?\d", "walked_numbers"),
-    (r"\bimpossible\s+\d", "impossible_numbers"),
+    (r"\bwalked\s+(past\s+)?(<N>|N\b|\d)", "walked_numbers"),
+    (r"\bimpossible\s+(<N>|N\b|\d)", "impossible_numbers"),
 )
 
 # A digit that is being asserted, not shown.  `<N>` / `N` / `…` / `?` are the
 # placeholder forms this file accepts, and they are the point of the rule.
-CONCRETE = re.compile(r"(?<![<\w])[\d,]{1,12}(?![\w>])")
+CONCRETE = re.compile(r"(?<![<\w])\d[\d,]{0,11}(?![\w>])")
 
 RECORD_MARKER = re.compile(r"\[obs:\s*([^\]]*)\]")
 # A tree named in prose: a hex ref of 7+ characters inside backticks.
@@ -127,27 +127,23 @@ def scan(files: list[str] | None = None) -> dict:
                 fenced += 1
                 continue
             _opened_inside, _open_at = _span_state(span_open, line)
-            for pattern, key in SELF_REFERENTIAL_PHRASES:
-                m = re.search(pattern, line, re.IGNORECASE)
-                if not m:
-                    continue
-                if not CONCRETE.search(line):
-                    continue
-                if (RECORD_MARKER.search(line) or INLINE_TREE.search(line)
-                        or PLACEHOLDER.search(line)):
-                    break
-                # Inside a code span the text is a transcript of a run, not a
-                # claim about this tree -- and the span may have opened on the
-                # line above, which is why the state is carried.
-                if span_open or (_open_at >= 0 and _open_at < m.start()):
-                    break
-                violations.append(
-                    {
-                        "file": rel, "line": lineno, "count": key,
-                        "text": line.strip()[:150],
-                    }
-                )
-                break
+            hit = _violation_key(line, span_open)
+            if hit is None:
+                span_open = _span_state(span_open, line)[0]
+                continue
+            # Inside a code span the text is a transcript of a run, not a claim
+            # about this tree -- and the span may have opened on the line
+            # above, which is why the state is carried.
+            if span_open:
+                span_open = _span_state(span_open, line)[0]
+                continue
+            violations.append(
+                {
+                    "file": rel, "line": lineno, "count": hit,
+                    "text": line.strip()[:150],
+                }
+            )
+            span_open = _span_state(span_open, line)[0]
             span_open = _opened_inside
     return {"violations": violations, "fenced_lines": fenced,
             "files": len(files if files is not None else markdown_files())}
@@ -194,6 +190,17 @@ def selftest() -> int:
         ("impossible stated with a placeholder",
          "<N> number(s) exceed the longest file in the tree (<B> line(s))",
          False),
+        # 10.290 §7 named this evasion and did not fix it; 10.291 measured it
+        # and did.  A checkbox that a slot excused the whole line meant a
+        # writer could keep the value and add the slot.
+        ("a placeholder used to smuggle the value in",
+         "the scan walked past N number(s), actually 6238.", True),
+        ("a placeholder with the value in parentheses",
+         "the scan walked past N number(s) (6238 today).", True),
+        # ... and the legitimate shape, so the fix is not "always red".
+        ("a placeholder whose bound is a file length",
+         "<N> number(s) exceed the longest file in the tree (26140 line(s))",
+         False),
     ]
     for label, line, want in cases:
         # The transcript case opens its span on the same line, so compute the
@@ -215,21 +222,51 @@ def selftest() -> int:
     return 0
 
 
-def _line_violates(line: str, _in_span: bool = False) -> bool:
-    """The single-line decision, extracted so the self-test can drive it."""
-    for pattern, _key in SELF_REFERENTIAL_PHRASES:
-        if not re.search(pattern, line, re.IGNORECASE):
+def _digits_beside_placeholder(line: str) -> bool:
+    """True when a concrete digit shares the line with a placeholder.
+
+    `N number(s), actually 6238` states a value and dresses it as a slot.
+    The bound is the one number that legitimately sits beside a count
+    placeholder -- `<N> ... (26140 line(s))` names a file length, not the
+    count -- so it is exempted by being the value of the phrase that names it.
+    """
+    for m in CONCRETE.finditer(line):
+        after = line[m.end():m.end() + 14]
+        if re.match(r"\s*line\(s\)", after):
+            continue
+        return True
+    return False
+
+
+def _violation_key(line: str, in_span: bool = False) -> "str | None":
+    """Which count this line states as a number, or None.
+
+    The ONE decision.  `scan()` and the self-test both call it, because two
+    copies of a decision drift: measured 2026-11-28, the copy inside `scan()`
+    kept the placeholder exemption while the copy the self-test drove had been
+    fixed, so seven self-test cases passed and the real run reported zero
+    violations on a document that contained one.
+    """
+    for pattern, key in SELF_REFERENTIAL_PHRASES:
+        m = re.search(pattern, line, re.IGNORECASE)
+        if not m:
             continue
         if not CONCRETE.search(line):
             continue
-        if (RECORD_MARKER.search(line) or INLINE_TREE.search(line)
-                or PLACEHOLDER.search(line)):
-            return False
-        m = re.search(pattern, line, re.IGNORECASE)
-        if m and _in_span:
-            return False
-        return True
-    return False
+        if RECORD_MARKER.search(line) or INLINE_TREE.search(line):
+            return None
+        if PLACEHOLDER.search(line) and not _digits_beside_placeholder(line):
+            return None
+        if in_span:
+            return None
+        return key
+    return None
+
+
+def _line_violates(line: str, _in_span: bool = False) -> bool:
+    """The single-line decision, extracted so the self-test can drive it."""
+    return _violation_key(line, _in_span) is not None
+
 
 
 def main() -> int:
