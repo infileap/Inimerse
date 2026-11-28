@@ -20591,3 +20591,161 @@ the same shape as this round's defect — a list that was correct when
 it was written — and it is a one-line fix that this round did not make
 because it would have moved the `--report` output that §10.278's
 receipt-style tests read.
+
+## §10.283 — the third number was the second one
+
+**1. Where this round starts.** The report opens with a coverage
+sentence that splits every `:N` in `docs/` into three populations:
+the numbers on lines that name a target (the set this checker grades),
+the numbers on lines that name a tracked file but no target, and the
+numbers on lines that name *no tracked file at all*. The last group
+is the one the sentence exists for. It is the group this checker
+declares it cannot read — ratios, version numbers, counts, chapter
+numbers of some other document — and a reader needs its size in order
+to know how much of `docs/` the green line below it is describing.
+
+The sentence printed `3931` twice.
+
+**2. What the code did.** Two counters, and one of them was
+incremented in the wrong branch:
+
+```
+if not mentions:
+    continue
+...
+named_lines += 1
+if names_a_target:
+    census_target_lines += 1
+else:
+    unnamed_numbers += <the numbers on this line>
+```
+
+`mentions` is the list of tracked files the line names. A line with
+no mentions at all was `continue`d **above** the census, so it was
+never counted. The `else` branch is the opposite population: a line
+that *does* name a tracked file, just not one of the two targets.
+Both branches incremented `unguarded_numbers` and `unnamed_numbers`
+respectively for the same lines, so the third number the report
+printed was the second number again — and the sentence attached to it
+said "lines that name no tracked file at all" about a population
+whose every line named one.
+
+**3. The gap, measured three ways.** The claim is not that the
+arithmetic is suspicious; it is that the two groups have different
+sizes on this tree.
+
+| population | lines carrying a number | numbers |
+| --- | --- | --- |
+| names a target | 268 | 1199 |
+| names a tracked file that is not a target | 1763 | 3931 |
+| names no tracked file | 662 | 1065 |
+
+The three numbers sum to 6195, which is every `:N` the scan walks
+past. The report was printing 1199 / 3931 / 3931, and the last two
+were the same reading written twice.
+
+**These are read on the tree this section arrived in, and the section
+moves them.** The prose below is `docs/`, so every number it carries
+is a new reference the census counts: with this section in place the
+middle column reads 3933 and the third 1065, and the two lines of the
+report that moved are named on purpose rather than left to be noticed
+later. The identity `1199 + 3933 + 1065 = 6197` holds in that tree.
+This is the same self-reference §10.282 recorded at a smaller scale,
+and it is the reason these are quoted as one tree's reading and not
+as "the" figures — a section about a census is part of the census.
+
+This is the third round in a row with the same shape, and the shape
+is worth naming because it has now cost three separate sections:
+§10.281 found cells whose names promised a rule the cell did not
+test, §10.282 found a bucket that asked for a precondition it did not
+need, and this one is a counter placed one branch away from its own
+population. In all three the number was plausible, the run was green,
+and the instrument was answering a question adjacent to the one it
+was asked.
+
+**4. The fix, and the thing that nearly went wrong.** The census for
+the unnamed group moves above the `continue`, where the population
+it describes actually is; the `else` branch becomes empty and is
+removed.
+
+The near-miss is the same one §10.282 records, and it fired on the
+first draft of this change. A checker whose own line numbers are
+reading input cannot be edited by insertion at the top: the draft
+added nine lines to the file, `docs/BOARD.md:64` cites `:2927`,
+`docs/streams/builtin-platform-census.md` is 160 lines long — so that
+row is *out of range* and nothing holds it through the owner — but
+the checker itself is 2937 lines tall and its line 2927 is
+`sys.exit(main())`. The row was being held by the coincidence of the
+checker's own height, and moving the file by nine lines took
+`unanchored` from 562 to 563 and the delta from `-3` to `-2`.
+
+So the edit was rebuilt as a **ten-for-ten line swap**: ten lines
+leave the `else` branch and ten lines enter above the `continue`. The
+file is 2937 lines before and after. Measured:
+
+```
+check_line_refs: 618 reference(s) held ..., 562 with no anchor in any file ...
+check_line_refs: pins -- explicit delta +12 (expect +12), unanchored delta -3
+  (ceiling +0), coincidental delta +0 (ceiling +0, 242 of 618 reference(s)
+  held), ambiguous delta +0 (ceiling +0, 172 reference(s) held by two or more
+  of the files their line names).
+```
+
+Every reading is where the round started. The two controlled variants
+say the mechanism is real and not a story: padding the file by nine
+lines **at the end** leaves `unanchored 562 / delta -3`; padding it by
+nine lines **in the middle** gives `unanchored 563 / delta -2`. Same
+nine lines, same count, different position — so the reading follows
+the height and not the content, which is exactly what §10.282 says
+about prose as well.
+
+**5. The cell.** `tools/check_line_refs.test.py` gains
+`check_the_census_groups_are_distinct`. Its fixture puts one number on
+a line that names a target, one on a line that names a tracked file
+that is not a target, and **two** on a line that names nothing. The
+last two being different numbers is the whole point: with one number
+on each side the broken and the fixed checker both print `1` and the
+cell cannot tell them apart — which is what the first draft of the
+cell did, and the reverse control said `ok` against the broken
+checker. Making them 2 and 1 gives the cell teeth:
+
+```
+check_line_refs.test.py: FAIL census/unnamed -- one line names no tracked
+file at all and carries two numbers, unnamed_numbers says 1.  Equal to
+unguarded_numbers (1) means the counter is reading the other group.
+```
+
+Against the checker at the start of this round that is the output;
+against this round's checker the cell passes. The suite is
+twenty-four cells.
+
+**6. What did not move.** `held` 618, `unanchored` 562, `explicit` 185
+and all four pins are unmoved — the same signature as §10.282, and the
+reason this defect could sit in the report for as long as it did.
+`--self-check` still reports `ok (6 checks)`; `links`, `doc-paths`,
+`text-integrity`, `line-refs`, `recon`, `check_docs_headings.py`
+(`removed=0 added=0`) and `check_word_refs.py` (`verdict=PASS`) are
+all green on this tree.
+
+**7. What this round does not settle.**
+
+**The census is still not pinned.** Like `out_of_range` in §10.282,
+the three coverage numbers are printed and never asserted. The new
+cell catches a counter moved to the wrong branch; a change that
+altered the *definition* — say, counting `:N-M` ranges as two numbers
+instead of one — would move a number and nothing would fail. That is
+the third bucket in a row to have a cell and no pin, and the pattern
+is now explicit enough to be a defect in its own right.
+
+**The third group is counted on lines, not on references.** A line
+that names no tracked file can carry a number that happens to be a
+line number in some file the checker never reads, and the census
+counts it as unnamed because that is what the sentence claims. That is
+honest, but it means `1065` is an upper bound on "numbers in `docs/`
+that are not references to this tree", never a lower one.
+
+**The `--report` per-grade loop still omits `symbol`.** §10.282
+recorded it as a one-line fix deliberately not made; this round did
+not make it either, for the same reason: it moves `--report` output
+that §10.278's receipt-style tests read, and it is not this round's
+defect.
