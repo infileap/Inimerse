@@ -1962,6 +1962,18 @@ set_tests_properties(wasm_mir_cover_selfcheck_regression PROPERTIES WORKING_DIRE
 add_test(NAME line_refs_selfcheck_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "check_line_refs self-check: ok \\([0-9]+ checks\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_line_refs.py --self-check)
 set_tests_properties(line_refs_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "docs;regression")
+# The rule docs/STATUS.md 10.289 adopted and did not enforce: a count that moves
+# when the text describing it is edited must not be written down as a number.
+# Two of check_line_refs.py's counts are like that, measured rather than chosen
+# (append one line quoting an epoch and exactly those two move).  The self-check
+# is registered beside the run because a checker that has only ever been
+# observed green is one nobody has seen work -- the defect 10.287 recorded.
+add_test(NAME self_referential_counts_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_self_referential_counts.py)
+set_tests_properties(self_referential_counts_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")
+add_test(NAME self_referential_counts_selfcheck_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "check_self_referential_counts --self-test: ok \\([0-9]+ cases\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_self_referential_counts.py --self-test)
+set_tests_properties(self_referential_counts_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")
 # The ledger arithmetic and the two parsers, on inputs whose answer is known --
 # including the ones the ledger has to reject.  No build output, no corpus.
 add_test(NAME aot_mir_cover_selfcheck_regression
