@@ -20671,8 +20671,9 @@ removed.
 The near-miss is the same one §10.282 records, and it fired on the
 first draft of this change. A checker whose own line numbers are
 reading input cannot be edited by insertion at the top: the draft
-added nine lines to the file, `docs/BOARD.md:64` cites `:2927`,
-`docs/streams/builtin-platform-census.md` is 160 lines long — so that
+added nine lines to the file, `docs/BOARD.md:64` [obs: 3190774] cited
+`:2927` of the checker, `docs/streams/builtin-platform-census.md` is
+160 lines long — so that
 row is *out of range* and nothing holds it through the owner — but
 the checker itself is 2937 lines tall and its line 2927 is
 `sys.exit(main())`. The row was being held by the coincidence of the
@@ -20718,6 +20719,27 @@ unguarded_numbers (1) means the counter is reading the other group.
 Against the checker at the start of this round that is the output;
 against this round's checker the cell passes. The suite is
 twenty-four cells.
+
+**5b. The stage that caught this section.** Writing the paragraph above
+put that same citation into `docs/` a second time, this time with no tree
+on it,
+and `stage_obs_markers` refused the commit: `pointers grew by 224
+against base e3e97c71e (2234 -> 2458); ceiling is 223 -- a new citation
+must name its tree`. The reading was right and the diagnosis was exact
+-- a set-diff of the pointer lists at `3190774` and at HEAD returns
+exactly one new row, that one -- so the repair is the one the stage
+asks for: the citation became a record naming the tree it was read on
+(`[obs: 3190774]`), which moves it from the pointer count into the
+record count. Measured after: `pointers 2457`, `delta +223` at the
+ceiling, `records 452 -> 453`. Nothing was deleted and no ceiling was
+raised.
+
+This is worth recording rather than quietly fixing, because the
+section above argues that a number must name the tree it was read on,
+and the first version of that argument did not. The instrument that
+caught it is the one §10.282 called unread — a marker that was
+accepted with any operand at all — and this round is the first one
+where its operand had to be resolvable for the gate to pass.
 
 **6. What did not move.** `held` 618, `unanchored` 562, `explicit` 185
 and all four pins are unmoved — the same signature as §10.282, and the
