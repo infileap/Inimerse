@@ -20389,3 +20389,205 @@ a checker for the checker: something that reads the cells and asks
 whether each rule the code states has a cell that fails when the
 rule is removed. That is a large piece of work and it is not
 attempted here.
+
+## §10.282 — the bucket that asked for a holder
+
+**1. Where this round starts.** `tools/check_line_refs.py` prints one
+line for the references whose number is past the end of the file they
+name. On the tree at the start of this round it printed `18`. The
+module docstring, twenty lines above the rule that computes it, says
+what the bucket means: *the number is past the end of the file it
+names. This is NOT held.* That sentence is a claim about every
+reference that satisfies its first half. The count was not counting
+every reference that satisfies its first half.
+
+**2. What the rule asks.** The branch was
+
+```
+if hits and owner_lines and number > len(owner_lines):
+    out_of_range.append((rel, lineno, number, owner, len(owner_lines)))
+elif hits:
+    held += 1
+```
+
+`hits` is the list of files whose line N carries a quoted span from the
+citing line. So the bucket recorded a reference only when *some other
+file* happened to carry that line number. A number past the end of its
+own file that nothing else holds fell through to the `else` and was
+filed as unanchored — with the literal text `<out of range>` typed
+into its `cited` field by a separate branch, so the report showed the
+words while the counter showed nothing. The counter and the report
+disagreed about the same reference, and the counter was the smaller
+of the two.
+
+The condition conflates two questions. "Is the number past the end of
+the file it names?" is about the owner. "Does anything carry it?" is
+about the holders. The bucket asked for both and reported the answer
+to the conjunction.
+
+**3. How big the gap is.** Measured by asking the owner's file directly
+and comparing with what the bucket printed:
+
+| tree | printed | references whose owner has no line N | gap |
+| --- | --- | --- | --- |
+| worktree | 18 | 40 | 22 |
+| base 1c6b338 | 27 | 53 | 26 |
+| base fca60a25 | 18 | 40 | 22 |
+
+The 40 divides into 18 that another file holds by line number and 22
+that nothing holds. The bucket was printing the first group and
+calling it the whole. This is not a regression introduced by any
+recent round: the base four hundred commits back has the same gap in
+the same proportion.
+
+**4. The docstring had already noticed, and explained it wrongly.** The
+paragraph this round rewrote said:
+
+> Measured on `89ec77a`: 55 of them under this rule (the number is past
+> the end of the file it names). A separate probe counted 26 there,
+> because it asked about the file the report PRINTS rather than the file
+> the number is attached to -- see the `target` boundary below.
+
+Both numbers are explained, and the explanation for the 26 is wrong.
+Measured on that revision: the bucket printed 26 and 47 references
+satisfy the rule the sentence states — 26 held by another file, 21
+held by nothing. The probe that reached 55 got there by also counting
+the rows that name no file at all, and those are not out of range:
+there is no file, so there is no end to be past. So the docstring is
+right that 55 and 26 are different questions, and wrong about which
+question the rule was answering. It blamed the probe for looking at
+the wrong file; the rule was looking at the wrong *thing*. The
+discrepancy was written down next to the defect for as long as the
+defect existed, and the note points away from it.
+
+**5. The rule now.** The number is out of range when the owner's file
+has no line N, and for no other reason:
+
+```
+_past_end = bool(owner_lines and number > len(owner_lines))
+```
+
+- Out of range is still **not** held. The lookup that fills `hits` can
+  only collect a file whose line N exists, so any hold of such a
+  reference is a coincidence of line numbers, never evidence about the
+  cited line.
+- A reference with **no owner at all** is not out of range. There is no
+  file to be past the end of, and the bucket keeps its hands off.
+- The row that nothing holds **stays in the unanchored list**. "Nothing
+  named on the line carries it" is a second, independent fact about the
+  same reference, and the unanchored ratchet has to keep seeing it.
+  Displacing it would trade one undercount for another.
+- So the two buckets **overlap on purpose**, and the report says so:
+  the line now reads `40 reference(s) ... 18 of them are held by
+  another file that way and 22 are held by nothing at all, so 22
+  appear in the unanchored count as well -- the two buckets answer two
+  questions and overlap on purpose.`
+
+The sum of the three buckets is therefore no longer the citation
+count. It used to be, exactly, and that identity was load-bearing: the
+report's own note says a constant sum means references moved between
+buckets and a changed sum means references entered or left. After this
+round `held + unanchored + out of range` is 1221 against 1199
+references, and the 22 difference is the overlap. The identity that
+survives is `held + unanchored + out of range - overlap = citations`,
+and the overlap is printed.
+
+**6. The numbers now.**
+
+| tree | held | unanchored | out of range | overlap | citations | sum |
+| --- | --- | --- | --- | --- | --- | --- |
+| worktree | 618 | 563 | 40 | 22 | 1199 | 1221 |
+| base 1c6b338 | 534 | 565 | 53 | 26 | 1126 | 1152 |
+| base fca60a25 | 618 | 567 | 40 | 22 | 1203 | 1225 |
+
+Held does not move, because a reference that was out of range was never
+held and a reference that was not out of range is untouched. The
+unanchored count does not move either — the 22 were already there. The
+only number that moved is the one that was wrong.
+
+**7. Why every pin still passes, and the way that nearly went wrong.**
+The four pinned readings are unmoved: explicit delta +12 against an
+expected +12, unanchored delta -2 against a ceiling of 0, coincidental
+delta +0 with 242 of 618 held, ambiguous delta +0 with 172 held by two
+or more of the files their line names. `out_of_range` is not pinned and
+never was, which is the reason this defect could sit in it: nothing
+here fails when the bucket changes, in either direction. That is the
+last thing this round does not fix.
+
+The near-miss is worth recording because it is a property of the
+instrument and not of this round. The first version of the change
+rewrote the module docstring and in doing so added twenty-seven lines
+above line 421 of the checker. The coincidence pin fired: `delta +1`
+against a ceiling of +0, one row added, `docs/BOARD.md` line 64
+carrying the number 421. The holder was `tools/check_line_refs.py`
+itself, at its line 421, which is the comment `# The base is main's
+1c6b338, not this branch's 8c75f31.` — and the citing line at
+`docs/BOARD.md` line 64 is the line that discusses exactly that base,
+so it contains the word `main` as a quoted span. In the base tree that
+file is 1935 lines long, so its line 421 does not exist and the row
+was unanchored; in the tree at the start of this round it is 2832
+lines, so line 421 exists and holds the row. Twenty-seven lines of
+prose moved a citation onto a comment about itself.
+
+The fix was to make the docstring replacement the same number of lines
+as the paragraph it replaces. A checker whose own line numbers are
+reading input cannot be edited by insertion at the top of the file —
+the rule this repository already wrote down for this file (new code
+goes at the end, below everything docs/ cites) applies to prose too,
+and the paragraph had to be compressed until it fit its old footprint.
+
+**8. The cell, and what it can see.** `tools/check_line_refs.test.py`
+already had a cell named `check_out_of_range`, added in §10.281 after a
+mutation audit showed that deleting the whole branch left every cell
+green. Its fixture gives the row a holder on purpose: a second file is
+120 lines long and its line 99 carries the quoted word. That is the
+half the old rule could see, so the cell could not see the defect.
+
+The new cell removes the holder. Same document, same owner, same
+number 99 against a seven-line file — but the only other file is seven
+lines long too, so nothing carries line 99 anywhere. Against the
+checker at the start of this round it fails:
+
+```
+check_line_refs.test.py: FAIL range/bare -- a number past the end of the
+file it names is out of range whether or not some other file holds that
+line number; nothing holds this one and the bucket has 0 entry(ies): []
+```
+
+Against this round's checker it passes, and the cell also asserts the
+two things that keep the fix honest: the row is not in `held`, and the
+same reference *is* in the unanchored list, so the overlap is a stated
+property rather than an accident of the code. The suite is now
+twenty-three cells.
+
+**9. What this round does not settle.**
+
+**The bucket is still not pinned.** `out_of_range` is printed and
+never asserted. A future round that deletes the append would be caught
+by the new cell, but a future change that alters the rule in a subtler
+way — say, an off-by-one in `number > len(owner_lines)` — would move
+the number and nothing would notice. Every other count in this file
+has a delta pin or a ceiling; this one has a cell and no pin, and the
+distance between those two things is exactly what §10.281 measured.
+
+**The three-line summary the audit asked for does not fit any more.**
+`docs/AUDIT.md` records a prescription for this bucket: print the
+counter, print how many report entries typed the literal
+`<out of range>`, and print their sum, so that a reader can tell a
+bucket move from a reference entering or leaving. That prescription
+assumed the two groups were disjoint, which they were while the rule
+required a holder. They overlap by construction now, so the sum would
+double-count the 22. What replaced it is the single line that states
+the split and the overlap. Whether the audit's receipt should be
+rewritten to match, or whether the old three-line form should be kept
+for a bucket that is not this one, is a question about the audit
+document and not about the checker.
+
+**The report still omits a grade.** The per-grade section of `--report`
+iterates over `own`, `borrowed` and `picked up`. The `symbol` grade was
+added three rounds ago and the loop was not updated, so 68 held rows
+have no example printed anywhere, while the header says 618. That is
+the same shape as this round's defect — a list that was correct when
+it was written — and it is a one-line fix that this round did not make
+because it would have moved the `--report` output that §10.278's
+receipt-style tests read.
