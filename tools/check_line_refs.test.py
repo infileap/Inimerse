@@ -1477,6 +1477,7 @@ def main() -> int:
     failures += check_off_target_is_counted()
     failures += check_symbol_owner_must_be_code()
     failures += check_the_counts_are_read()
+    failures += check_the_census_groups_are_distinct()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
@@ -1946,6 +1947,75 @@ def check_the_counts_are_read() -> int:
         failures += 1
         print("check_line_refs.test.py: FAIL counts/held -- exactly one "
               f"reference is held, `held` says {r['held']}: {r['held_rows']!r}")
+    return failures
+
+
+# --- cell: the third census number is not the second one ---------------
+#
+# The report's coverage sentence prints three populations: lines that name a
+# tracked file, the numbers on the ones that name a TARGET (the set this
+# checker grades), the numbers on the ones that name a tracked file but no
+# target, and the numbers on lines that name nothing at all.  The last two
+# are different groups, and the counter for the last one used to sit inside
+# the branch for the second: both incremented `unnamed_numbers`, so the
+# report printed the same number twice and told the reader one of them was
+# about lines that "name no tracked file at all".
+#
+# Measured on 3190774: 3931 printed against 1065 on the lines the sentence
+# names.  Every other reading was untouched -- held 618, unanchored 562,
+# and all four pins -- which is why nothing here went red, and it is the
+# same shape as 10.281 and 10.282: a counter that answers a question
+# adjacent to the one it is asked.
+census_DOC = "docs/fix/census.md"
+census_NOTES = "docs/fix/notes.md"
+census_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`tools/gate.sh` carries `deep_word` at `:3`.",          # target, 1 number
+        "",
+        "`docs/fix/notes.md` is a file but not a target: `:4`.",  # tracked, not target
+        "",
+        "a line that names no tracked file: v0.6.2 `:12` and `:13`.",  # unnamed
+    ]
+) + "\n"
+census_OTHER_TEXT = "\n".join(
+    ["#!/bin/bash", "# fixture", "the word deep_word sits here", "echo four"]
+) + "\n"
+census_NOTES_TEXT = "\n".join(["# notes", "", "one", "two", "three"]) + "\n"
+
+
+def check_the_census_groups_are_distinct() -> int:
+    """The unnamed group is the lines that name nothing, not the other half."""
+    failures = 0
+    r = scan_with(
+        {census_DOC: census_TEXT, "tools/gate.sh": census_OTHER_TEXT,
+         census_NOTES: census_NOTES_TEXT}
+    )
+    # Two lines name a tracked file (the target line and the notes line); of
+    # those, one names a target and carries one number.
+    if r["named_lines"] != 2:
+        failures += 1
+        print("check_line_refs.test.py: FAIL census/named -- two lines name a "
+              f"tracked file, named_lines says {r['named_lines']}")
+    if r["target_lines"] != 1 or r["target_numbers"] != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL census/target -- one line names a "
+              "target and carries one number, the report says "
+              f"target_lines={r['target_lines']} target_numbers="
+              f"{r['target_numbers']}")
+    if r["unguarded_numbers"] != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL census/unguarded -- the notes line "
+              "names a tracked file that is not a target and carries one "
+              f"number, unguarded_numbers says {r['unguarded_numbers']}")
+    if r["unnamed_numbers"] != 2:
+        failures += 1
+        print("check_line_refs.test.py: FAIL census/unnamed -- one line names no "
+              "tracked file at all and carries two numbers, unnamed_numbers says "
+              f"{r['unnamed_numbers']}.  Equal to unguarded_numbers "
+              f"({r['unguarded_numbers']}) means the counter is reading the "
+              "other group.")
     return failures
 
 

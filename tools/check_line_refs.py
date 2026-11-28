@@ -1404,6 +1404,28 @@ def scan() -> dict:
     oor_bare = 0
     mention_lines = 0
     inline_lines = 0
+    # THE CENSUS.  Four numbers, all read on every line of docs/ that names a
+    # tracked file:
+    #   named_lines        lines in docs/ that name a tracked file at all
+    #   target_lines       of those, the ones that name a TARGET
+    #   target_numbers     the numbers on those lines
+    #   unguarded_numbers  the numbers on the lines that name no TARGET --
+    #                      the references this checker does NOT grade
+    # The last one is a coverage statement, not a count of findings: those
+    # references are outside the input set this checker declared, and a reader
+    # who does not know that is reading a report about a larger tree than the
+    # one the report is about.
+    named_lines = 0
+    census_target_lines = 0
+    target_numbers = 0
+    unguarded_numbers = 0
+    # The third group: numbers on lines that name NO tracked file at all.
+    # These are not references to this tree -- they are ratios, version
+    # numbers, counts, line numbers of some other document -- and the
+    # checker cannot tell them apart from references without reading them.
+    # They are counted so that the coverage sentence accounts for EVERY
+    # `:N` in docs/ and not only the ones this checker can act on.
+    unnamed_numbers = 0
     files: set[str] = set()
     # One identity per reference, in the form a receipt can name: the citing
     # document, the number, and the file the number is attributed to.  Line
@@ -1454,16 +1476,40 @@ def scan() -> dict:
                 # would own every number after it.
                 mentions.sort()
                 if not mentions:
+                    # THE THIRD GROUP, counted nowhere else: the lines that
+                    # name no tracked file.  It used to be counted in the
+                    # `else` below -- the group that DOES name one -- so the
+                    # number this report printed third was its second again.
+                    unnamed_numbers += sum(
+                        1 for _m in NUMBER.finditer(line)
+                        if int(_m.group(1)) >= 1
+                    )
                     continue
-                if any(tok in TARGETS for _s, _e, tok in mentions):
+                names_a_target = any(tok in TARGETS for _s, _e, tok in mentions)
+                # THE CENSUS.  Every line in docs/ that names a tracked file
+                # is counted here, whether or not this checker looks at it,
+                # and every number on such a line is counted whether or not
+                # it is a reference THIS checker grades.  The counts are what
+                # the report's coverage sentence is built from; without them
+                # the report can only say how much it looked at, and a checker
+                # that measured only its own slice would report "nothing
+                # missed" while missing everything outside it.
+                named_lines += 1
+                if names_a_target:
+                    census_target_lines += 1
                     mention_lines += 1
                 spans = anchors(line)
                 refs_here = 0
-                names_a_target = any(tok in TARGETS for _s, _e, tok in mentions)
                 line_refs = []
                 for m in NUMBER.finditer(line):
                     number = int(m.group(1))
-                    if number < 1 or not names_a_target:
+                    if number < 1:
+                        continue
+                    if names_a_target:
+                        target_numbers += 1
+                    else:
+                        unguarded_numbers += 1
+                    if not names_a_target:
                         continue
                     owner = None
                     for _start, end, token in mentions:
@@ -1915,6 +1961,10 @@ def scan() -> dict:
         "coincident": coincident,
         "ambiguous": ambiguous,
         "mention_lines": mention_lines, "inline_lines": inline_lines,
+        "named_lines": named_lines, "target_lines": census_target_lines,
+        "target_numbers": target_numbers,
+        "unguarded_numbers": unguarded_numbers,
+        "unnamed_numbers": unnamed_numbers,
         "files": files, "citations": citations,
     }
 
@@ -2173,6 +2223,21 @@ def main() -> int:
         f"check_line_refs: {r['mention_lines']} line(s) in docs/ name a target; "
         f"{r['inline_lines']} of them carry an inline number -- that is the "
         f"input set ({len(r['files'])} file(s))."
+    )
+    # THE COVERAGE SENTENCE.  The line above says what the input set IS.  It
+    # does not say what is outside it, and the number of references outside it
+    # is the number a reader needs in order to weigh every other number in
+    # this report.  A report that prints its own denominator and calls it the
+    # input set is a report about a smaller tree than the tree it names.
+    print(
+        f"check_line_refs: coverage -- {r['named_lines']} line(s) in docs/ name "
+        f"a tracked file; {r['target_lines']} name a target and carry "
+        f"{r['target_numbers']} number(s), which is the set this checker "
+        f"grades.  {r['unguarded_numbers']} number(s) sit on the other lines "
+        f"and are NOT graded here: this checker reads the references to its "
+        f"targets, not every reference in docs/.  {r['unnamed_numbers']} more "
+        f"number(s) sit on lines that name no tracked file at all, and are "
+        f"not references to this tree."
     )
     print(
         "check_line_refs: writings -- "
