@@ -21795,3 +21795,115 @@ The self-test now has a case per exemption, which is the discipline
 that keeps widening visible — but it is a discipline, not a
 derivation, and §10.290 already recorded the cost of a discipline
 without an executor.
+
+## §10.292 — the exemptions nobody had ever seen work
+
+**1. Where this round starts.** §10.291 closed with a half-promise:
+*"the self-test now has a case per exemption, which is the discipline
+that keeps widening visible — but it is a discipline, not a
+derivation."* Whether the cases actually cover the exemptions is a
+measurable question, and it had not been asked with a mutation.
+
+**2. The audit, run for the first time.**
+
+| mutation | outcome before |
+| --- | --- |
+| record marker removed | caught |
+| **inline tree removed** | **missed** |
+| placeholder exemption widened | caught |
+| span exemption removed | caught |
+| **carried span removed** | **missed** |
+
+Two of four. The table in §10.291 said "a case per exemption"; the
+committed self-test had eleven cases and none of them could see either
+of these two deletions.
+
+**3. Missed by the cases left is not the whole finding.** Both
+mutations were then applied to the **tree**, not just the self-test:
+
+```
+inline tree removed  -> real scan: 0 violations (unchanged)
+carried span removed -> real scan: 0 violations (unchanged)
+```
+
+Measured directly: **no line in `docs/` is exempt by the record or
+inline-tree rule alone, and no line arrives with a span carried in
+from the previous line.** So these were exemptions with neither a case
+nor a user — code that had never done anything, which is the state
+this repository's own §10.281/§10.286/§10.287/§10.288 records for
+cells that are "true by construction": it reads as coverage.
+
+**4. The repair is three cases, not two deletions.** Deleting them
+would be honest today and wrong the moment someone writes a line that
+needs them — and the exemption list is documentation of which shapes
+are legitimate. So each gets a case:
+
+- `[obs: 4b5065fc]` on the line (the record form);
+- the same tree named inline in backticks;
+- **the carried span**, driven through the parameter `_violation_key`
+  already takes, because no single-line case can reach it.
+
+Self-test 11 → 14 cases; the audit is now **6/6**.
+
+**5. The audit is a tool now, and that exposed its own blind spot.**
+The round's first version of this audit was a script in the shell. An
+experiment expires, so it became `tools/self_ref_mutation_audit.py`,
+registered as a CTest. Writing it down exposed a defect the experiment
+could not: **an audit knows only the mutations it lists.** Measured — a
+brand-new, uncovered exemption was added to the checker and the audit
+still reported a clean `6/6`, because nothing about a new hole changes
+an old mutation's outcome.
+
+That blind spot is now a red. The tool counts the `return None` sites
+in `_violation_key` and compares them with `EXPECTED_EXEMPTION_SITES`:
+
+```
+SETUP -- `_violation_key` has 5 exemption site(s) and this audit claims to
+cover 4. A new hole is invisible to an audit that lists mutations, so the
+count is asserted: add a mutation and raise EXPECTED_EXEMPTION_SITES in the
+same edit.
+exit 2
+```
+
+An instruction, not a complaint: the reader is told the two edits that
+keep them together.
+
+**6. Two controls for the audit itself**, because a green audit is the
+claim under test:
+
+| control | rc | want |
+| --- | --- | --- |
+| the checker keeps a widened exemption (anchor gone) | 1 → `5/6` | not 0 |
+| a new uncovered exemption is added | 2 (`SETUP`) | 2 |
+| the tree as committed | 0 | 0 |
+
+The first is the "audit still passes" failure: with an exemption
+permanently widened, the mutation's anchor disappears and the audit
+reports `5/6` — it refuses to call a skipped mutation a pass.
+
+**7. The numbers now.** `self_ref_mutation_audit: 6/6 mutations
+caught`; `check_self_referential_counts --self-test: ok (14 cases)`;
+`held` 618, `unanchored` 562, `explicit` 185, all four pins unmoved;
+`ctest 235`, `recon` `PASS`, `stage-count` clean.
+
+**8. What this round does not settle.**
+
+**The audit still only covers the mutations somebody thought of.** The
+site count closes the "new hole" gap, not the "same hole, different
+widening" gap: an exemption rewritten to be *narrower* (excluding more)
+would keep its site count and its anchor, and no case asserts the
+narrowing. The three cases added are each one shape; a fourth shape
+that the exemption should also accept has no test.
+
+**`EXPECTED_EXEMPTION_SITES` is a number in a file**, exactly the kind
+§10.289 spent a round on. It is stable under its own description
+because it counts code rather than prose, which is the distinction
+that made it writable — but nothing re-measures it, and a refactor that
+collapsed two exemptions into one statement would make it wrong
+without making anything red.
+
+**The two dead exemptions are still dead.** They now have cases, so a
+deletion is visible, but no line in `docs/` needs them. Whether they
+should exist at all is a question about the rule, not the checker, and
+this round chose to keep them with cases rather than delete them —
+a choice stated here so a future reader can disagree with it.
