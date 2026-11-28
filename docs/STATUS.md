@@ -21367,12 +21367,18 @@ walked`. A number that cannot be a line number belongs to none of the
 three, so it becomes a fourth group and the identity includes it:
 
 ```
-1198 + 3940 + 1066 + 13 == 6217
+1198 + 3940 + 1066 + 13 == 6217        # on 4b5065fc
 ```
 
+Both sides of that identity move together when this section is edited,
+because the fourth group is fed by the prose describing it; what holds
+on every tree is the shape, and the numbers above are the reading on
+`4b5065fc` -- the commit that added the rule and no prose.
+
 The coverage sentence now states the group and the bound it rests on,
-so a reader sees `22 number(s) exceed the longest file in the tree
-(26140 line(s))` rather than an unexplained gap.
+so a reader sees `<N> number(s) exceed the longest file in the tree
+(<B> line(s))` — with `N` and `B` as the run printed them, not as this
+paragraph remembers them — rather than an unexplained gap.
 
 **5. Three things went wrong, and all three are the same shape as
 §10.283–287.**
@@ -21475,7 +21481,8 @@ The second item was the one with teeth, and it turned out to be about
 §10.288 itself rather than about the thirteen rows.
 
 **2. Two numbers in §10.288 were already wrong when written.** The
-section states `walked` 6217 and `impossible 13`. Reading the tree the
+section states `walked` 6217 and `impossible` 13 [obs: 4b5065fc]. The tree it
+was committed into reads:
 section was committed into:
 
 | claim | §10.288 says | that tree reads |
@@ -21575,9 +21582,120 @@ count, a hash), and nothing in the report separates them; and
 `_max_lines` still walks the whole tree beside the digest's own walk,
 unshared, which is a performance question nobody has measured.
 
-**The three-tree table is itself a reading.** It is stable under this
-section because the three commits are fixed, but `this tree` is not a
-commit — it is whatever tree the reader has, and the table says 24 for
-a number that will move again on the next edit of any section that
-quotes an epoch. The row is labelled, which is the most a moving
-reading can honestly be.
+**The three-tree table is itself a reading.** Its first two rows are
+stable, because `4b5065fc` and `9e2055f8` are commits and a commit does
+not move. Its third row is not: `this tree` is whatever tree the reader
+has, and the count moves on the next edit of any section that quotes an
+epoch. That row was first written as a number, then corrected to
+another number, then corrected again — three values for one tree in one
+round, which is §3 being wrong in the way §3 describes, inside the
+round that describes it. It now carries the command. What the table can
+honestly say about a moving reading is where to read it, and that is
+all the third row says.
+
+## §10.290 — the rule 10.289 adopted, made checkable
+
+**1. Where this round starts.** §10.289 closed with the honest note that
+its own rule was unenforced: *"nothing enforces §4's rule. 'Write the
+command, not the number' is a discipline, and this repository has paid
+for disciplines before."* A discipline that lives only in prose is a
+rule nobody is held to. This round turns it into a checker.
+
+**2. The first thing it needed was a measurement, not an opinion.**
+"Which readings move when you write them" must not be a judgement
+call, or the checker would encode taste. Measured: append one line
+quoting `:1790919002` to `docs/STATUS.md` and re-scan.
+
+| count | before | after | moves |
+| --- | --- | --- | --- |
+| `held` | 618 | 618 | no |
+| `explicit` | 185 | 185 | no |
+| `target_numbers` | 1198 | 1198 | no |
+| `unguarded_numbers` | 3941 | 3941 | no |
+| `unnamed_numbers` | 1073 | 1073 | no |
+| `oor_held` / `oor_bare` | 18 / 21 | 18 / 21 | no |
+| `no_anchor` / `out_of_range` | 562 / 39 | 562 / 39 | no |
+| **`impossible_numbers`** | 26 | **27** | **yes** |
+| **`walked_numbers`** | 6238 | **6239** | **yes** |
+
+Exactly two of the eleven move, and they are the two that count **every
+number in `docs/`** — the prose describing them is part of their own
+input. The other nine are properties of the citations, and a citation
+is a citation whether the sentence around it is new or old. That
+measurement is what the checker encodes, in a constant named
+`SELF_REFERENTIAL` and quoted from this table.
+
+**3. What the checker flags, and what it lets through.** A line that
+(a) phrases one of those counts as a present value and (b) carries a
+concrete digit. Every exemption is a **class**, each with a stated
+reason:
+
+| exemption | why it is not a violation |
+| --- | --- |
+| `[obs: <ref>]` on the line | a record: the number was read on that tree, and a fixed tree's count does not move |
+| a ref inside backticks | the same thing stated in prose |
+| inside a code span | a transcript of a run, not a claim about this tree — and the span may OPEN ON THE PREVIOUS LINE, which is why the scan carries that state |
+| `N` / `<N>` / `<B>` / `…` / `?` | the placeholder form is the correct way to write a moving reading |
+
+**4. The self-test found two real defects while the checker was being
+written**, before it ever ran on the tree:
+
+- `PLACEHOLDER` contained `\bB\b`, which matches ordinary text and made
+  the positive control pass silently;
+- `QUOTED_OUTPUT` listed `the scan walked` as a *verb* that marks a
+  transcript — but that is the very phrase under test, so the control
+  could never fire. It was replaced by the code-span position, which
+  is the distinction this repository already uses to tell a quote from
+  a claim.
+
+Both were caught by the seven synthetic cases. That is the fifth
+consecutive round in which a control caught something the author had
+not seen (§10.283, §10.286, §10.287, §10.288, and this), and the first
+in which the control caught it **before** the checker was trusted.
+
+**5. Registered as tests, not as a gate stage, and that choice was
+forced by a measurement.** The first version added a `self-referential`
+stage to `tools/gate.sh`. That grew `tools/gate.sh` by thirteen lines,
+and `tools/gate.sh` is a **TARGET** — a file whose line numbers `docs/`
+cites. Measured: `unanchored delta` went from `-2` to `+9`, `held`
+618 → 607, five documents' worth of anchors moved. Six documents also
+spell the stage count, so the stage would have cost seven edits to
+report one check.
+
+Since CTest is already a stage of the gate, registering two tests gets
+the check run by the same gate with **no** TARGET growing:
+`self_referential_counts_regression` (the run) and
+`self_referential_counts_selfcheck_regression` (its controls).
+`EXP_CTEST` 232 → 234 and the §14 recon token move with it; editing a
+TARGET's **value** does not move a cited line, and editing its
+**length** does — that is the difference the first draft ignored.
+
+**6. The numbers now.** `held` 618, `unanchored` 562, `explicit` 185,
+out of range 39, all four pins exactly where they were (`explicit delta
++12`, `unanchored delta -2`, `coincidental delta +0`, `ambiguous delta
++0`), `ctest 234`, `recon` `tokens-read-back=5|closed=yes|PASS`, and
+the new stage's own report: `0 violation(s)` with `7/7` self-test cases.
+
+**7. What this round does not settle.**
+
+**The checker covers two counts, not the class.** It knows the two
+readings measured to be self-referential **today**. A future change
+that makes a third count depend on the prose (say, a count of blocks,
+or of headings) would not be caught, because the set is a constant
+quoted from a measurement taken once. The constant says where it came
+from; nothing re-takes it.
+
+**It checks prose, not behaviour.** A line can pass by carrying a
+placeholder while the sentence around it still asserts a specific
+value — `about N number(s), actually 26`. The exemptions are lexical
+and a writer who wants to state a moving number without a marker can
+still do so by phrasing it as a transcript inside a code span.
+
+**The two `--report` outputs are still unpinned**, as §10.286 noted,
+and nothing here changes that.
+
+**One `[obs:]` marker was added to §10.289 in this round**, because the
+new checker flagged a line that stated a count without naming its
+tree. The marker was correct to require it — the number *was* read on
+`4b5065fc` and that fact had been left in the sentence as though it
+applied here.
