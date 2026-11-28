@@ -21178,3 +21178,117 @@ exactly right. The reading is consistent; what it reveals is that
 eight references sit one line past a file's end, which is a statement
 about `docs/` and not about the checker, and this round did not audit
 it.
+
+## §10.287 — the last reading nobody compared
+
+**1. Where this round starts.** §10.286 ended by naming the one reading
+in this report with no assertion of any kind: the four grade counters
+`held_own`, `held_borrowed`, `held_symbol`, `held_picked`. §10.284
+made `--report` *display* all four; two rounds later nobody *compared*
+them. Their sum is `held`, which existing cells cover, so the split
+inside that total was invisible.
+
+**2. The measurement.** Deleting one branch of the grade assignment:
+
+```
+elif grade == "symbol":
+    held_symbol += 1
+```
+
+takes `symbol` from 68 to 0 and pushes `picked up` from 476 to 544.
+The receipt prints `own 9, borrowed 65, symbol 0, picked up 476`→544
+and `VERDICT|assertions=0`. No cell red, no pin moved. A whole grade
+could stop existing and the checker would report a clean run.
+
+**3. The two identities.** Neither needs a pin, for the reason §10.285
+and §10.286 both measured — a count would have to be re-taken on every
+`docs/` edit and would then describe only the tree it was re-taken on:
+
+```
+sum(own, borrowed, symbol, picked up) == held
+each counter == #{rows in held_rows carrying that grade}
+```
+
+The second is the one with teeth. It binds the counter to the
+**evidence the report prints** — `held_rows` is what `--report` shows
+examples from — so a counter can only be wrong if the rows are wrong in
+the same way. The first alone would pass if two grades were swapped
+with the total preserved; the second catches that.
+
+**4. The controls.**
+
+```
+control 1: the `symbol` branch deleted
+  VERDICT|assertions=1|causes=1|...|cause=grade-counter-drift
+  the grade counter and the rows it counts disagree for 'picked up'
+  (544 counted vs 476 rows), 'symbol' (0 counted vs 68 rows)
+
+control 2: own and borrowed swapped
+  VERDICT|assertions=1|causes=1|...|cause=grade-counter-drift
+  ... for 'borrowed' (9 counted vs 65 rows), 'own' (65 counted vs 9 rows)
+```
+
+Both name the grade and both numbers. The suite is now twenty-eight
+cells; `measured_cells` went 16 → 18.
+
+**5. Third round running: the cell passed its own control for the
+wrong reason.** The first version of
+`check_grade_counters_match_their_rows` used a prose-only fixture. A
+prose citation of `tools/gate.sh` can reach `borrowed` and `picked up`
+— it cannot reach `symbol`, because that grade needs a **code** owner
+whose line N names the same identifier. So deleting the `symbol` branch
+changed nothing the cell looked at, and the control passed.
+
+The fixture now uses `CODE_OWNER` — the same one the `symbol` cell
+already uses to reach that grade — and the cell carries a third
+assertion that the fixture reaches `symbol` at all:
+
+```
+FAIL grades/reach -- the fixture must produce a `symbol` row, or this cell
+cannot see that grade's branch disappear; it produced [...]
+```
+
+That assertion is the lesson of three rounds stated as code: **§10.283**
+had a census cell with equal numbers on both sides (blind to its own
+defect); **§10.286** had an out-of-range cell citing `:99` and `:3`
+against a seven-line file (blind to the off-by-one); **§10.287** had a
+grade cell that could not produce the grade whose deletion it existed to
+catch. In all three the cell was correct on the tree and the control was
+observed only as "the run went red somewhere". A cell is not known to
+work until **that cell** is the one that reds.
+
+**6. The numbers now.** `held` 618 = `own 9 + borrowed 65 + symbol 68 +
+picked up 476`, `unanchored` 562, `explicit` 185, out of range 40,
+`walked_numbers` 6201, all four pins unmoved (`explicit delta +12`,
+`unanchored delta -3`, `coincidental delta +0`, `ambiguous delta +0`).
+`VERDICT|assertions=0|...|measured_cells=18`.
+
+The file grew from 2991 to 3031 lines and no reading moved; this was
+checked, not assumed: `--strict` is still on line 2205, because every
+addition is inside `main()` below it.
+
+**7. What this round does not settle.**
+
+**Every reading in this report now has an assertion of some kind, and
+none of them is a count.** That is a real change of state, and it has a
+cost worth writing down: the assertions are now all *internal
+consistency* — counters agreeing with rows, groups summing to a total,
+rows satisfying their own rule. None of them says the **rules** are
+right. A rule that is wrong in the same direction as its rows passes
+every one of them. That was already true before this round; the
+difference is that it is now the *only* kind of check this report has,
+so it should not be mistaken for coverage.
+
+**The converse of the out-of-range rule is still unasserted** (§10.286
+§7): the cells check that every row in the bucket satisfies
+`number > size`; they do not check that every reference whose owner has
+no line N is in the bucket. Same shape as the unanchored list's
+asymmetry, raised in §10.283 and still open.
+
+**The `symbol` grade's own rule is only covered by construction.** The
+identity says the counter matches the rows; it does not say those rows
+are `symbol` for the reason the docstring gives. `check_symbol_grade`
+and `check_symbol_must_be_a_name` cover the grading rule at the fixture
+level, so the gap is narrow — but the identity would be satisfied by a
+`symbol` rule that fired correctly and a report that printed it
+correctly, which is not the same as the rule being right.
