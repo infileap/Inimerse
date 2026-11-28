@@ -76,6 +76,16 @@ MUTATIONS = (
         "            return None\n",
         "        if in_span:\n            return None\n",
     ),
+    (
+        "inline-tree pattern narrowed to one ref",
+        'INLINE_TREE = re.compile(r"`[0-9a-f]{7,40}`")',
+        'INLINE_TREE = re.compile(r"`4b5065fc`")',
+    ),
+    (
+        "record marker narrowed to one ref",
+        'RECORD_MARKER = re.compile(r"\\[obs:\\s*([^\\]]*)\\]")',
+        'RECORD_MARKER = re.compile(r"\\[obs:\\s*(4b5065fc)\\]")',
+    ),
 )
 
 

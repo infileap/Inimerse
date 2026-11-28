@@ -214,9 +214,26 @@ def selftest() -> int:
         # case is an exemption nobody has ever seen work, so each gets one
         # here even though the corpus does not exercise it.
         ("a record naming the tree it was read on",
-         "the scan walked past 6238 number(s) [obs: 4b5065fc].", False),
+         "the scan walked past 6238 number(s) [obs: 069c316].", False),
         ("a tree named inline instead of in a marker",
-         "the scan walked past 6238 number(s) on `4b5065fc`.", False),
+         "the scan walked past 6238 number(s) on `0ebd68d`.", False),
+        # A narrowing that keeps the anchor intact is invisible to a case that
+        # uses one ref, so the shape is tested at both ends: a short ref (7
+        # chars, the minimum) and a long one (40, the maximum).
+        ("a record whose ref is the minimum length",
+         "the scan walked past 6238 number(s) [obs: 029bea6].", False),
+        ("a record whose ref is the maximum length",
+         "the scan walked past 6238 number(s) [obs: "
+         + "a" * 40 + "].", False),
+        ("a record whose ref is not resolvable here",
+         "the scan walked past 6238 number(s) [obs: deadbeef].", False),
+        # ... and the same shape at both length extremes INLINE, because the
+        # marker pattern accepts any content while the inline one has a length
+        # bound; a case in only one form leaves that bound untested.
+        ("an inline ref of the minimum length",
+         "the scan walked past 6238 number(s) on `029bea6`.", False),
+        ("an inline ref of the maximum length",
+         "the scan walked past 6238 number(s) on `" + "a" * 40 + "`.", False),
         # ... and the carried state, which no single-line case can reach: the
         # span opened on the PREVIOUS line.  `_violation_key` takes it as a
         # parameter precisely so it can be driven from here.
