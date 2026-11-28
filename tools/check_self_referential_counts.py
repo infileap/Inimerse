@@ -207,13 +207,26 @@ def selftest() -> int:
         # this -- measured when scan() and the self-test were merged.
         ("a value quoted inline in a table cell",
          "| the plain value (`walked past 6238`) | 1 | 1 |", False),
+        # The two exemptions that no line on this tree currently needs.  They
+        # had no case, and a mutation audit showed why that matters: deleting
+        # either one changed nothing the self-test could see -- and nothing on
+        # the tree either, which is the honest reason.  An exemption with no
+        # case is an exemption nobody has ever seen work, so each gets one
+        # here even though the corpus does not exercise it.
+        ("a record naming the tree it was read on",
+         "the scan walked past 6238 number(s) [obs: 4b5065fc].", False),
+        ("a tree named inline instead of in a marker",
+         "the scan walked past 6238 number(s) on `4b5065fc`.", False),
+        # ... and the carried state, which no single-line case can reach: the
+        # span opened on the PREVIOUS line.  `_violation_key` takes it as a
+        # parameter precisely so it can be driven from here.
+        ("a span carried in from the previous line",
+         "the scan walked past 6238 number(s).", False, True),
     ]
-    for label, line, want in cases:
-        # The transcript case opens its span on the same line, so compute the
-        # state the scan would carry into it: False, then the line's own.
-        _state, open_at = _span_state(False, line)
-        _open_before = open_at >= 0 and line.count("`", 0, open_at + 1) % 2 == 1
-        got = _line_violates(line, _open_before)
+    for case in cases:
+        label, line, want = case[0], case[1], case[2]
+        carried = case[3] if len(case) > 3 else False
+        got = _line_violates(line, carried)
         if got != want:
             failures += 1
             print(
