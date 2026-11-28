@@ -1479,6 +1479,7 @@ def main() -> int:
     failures += check_the_counts_are_read()
     failures += check_the_census_groups_are_distinct()
     failures += check_every_grade_has_a_report_line()
+    failures += check_census_partition_is_an_identity()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
@@ -2078,6 +2079,58 @@ def check_every_grade_has_a_report_line() -> int:
         print("check_line_refs.test.py: FAIL grades/loop -- --report no longer "
               "walks GRADES; a hand-written list in its place is the defect "
               "this cell exists for")
+    return failures
+
+
+# --- cell: the census groups partition every number the scan walks ---------
+#
+# 10.283 fixed a counter sitting in the wrong branch by moving it.  That fix is
+# a fact about one tree; what makes it hold on the next one is the identity the
+# three groups satisfy: a line names a target, names a tracked file that is not
+# one, or names nothing, so their counts must sum to every number the scan
+# walked past.  The cell asserts the identity, not a delta, because a delta
+# would have to be re-taken on every docs/ edit and would then describe only
+# the tree it was re-taken on.
+#
+# Reverse control: reintroducing 10.283's defect (counting the unnamed-population
+# numbers in the not-a-target branch) makes this cell red with the sums, while
+# every pinned delta stays green -- which is exactly why the pins could not see
+# that defect for as long as it lived.
+part_DOC = "docs/fix/partition.md"
+part_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`tools/gate.sh` carries `deep_word` at `:3`.",   # target, 1 number
+        "",
+        "`docs/fix/notes.md` names a file, not a target: `:4`.",  # no target
+        "",
+        "nothing is named here: v0.6.2 `:12` and `:13`.",         # unnamed, 2
+    ]
+) + "\n"
+part_NOTES = "docs/fix/notes.md"
+
+
+def check_census_partition_is_an_identity() -> int:
+    """target + unguarded + unnamed == every number the scan walked."""
+    failures = 0
+    r = scan_with(
+        {part_DOC: part_TEXT, "tools/gate.sh": cnt_OTHER_TEXT,
+         part_NOTES: cnt_OTHER_TEXT}
+    )
+    total = r["target_numbers"] + r["unguarded_numbers"] + r["unnamed_numbers"]
+    if r["walked_numbers"] != 4:
+        failures += 1
+        print("check_line_refs.test.py: FAIL partition/walked -- the fixture "
+              f"carries four numbers in total, walked_numbers says "
+              f"{r['walked_numbers']}")
+    if total != r["walked_numbers"]:
+        failures += 1
+        print("check_line_refs.test.py: FAIL partition/sum -- the three groups "
+              f"sum to {total} ({r['target_numbers']} + "
+              f"{r['unguarded_numbers']} + {r['unnamed_numbers']}) but the scan "
+              f"walked {r['walked_numbers']}; the census is no longer a "
+              "partition, so one counter is reading another's population")
     return failures
 
 

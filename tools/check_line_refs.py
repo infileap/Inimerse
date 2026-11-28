@@ -1435,7 +1435,7 @@ def scan() -> dict:
     # checker cannot tell them apart from references without reading them.
     # They are counted so that the coverage sentence accounts for EVERY
     # `:N` in docs/ and not only the ones this checker can act on.
-    unnamed_numbers = 0
+    unnamed_numbers = walked_numbers = 0   # walked = every number; see the cell
     files: set[str] = set()
     # One identity per reference, in the form a receipt can name: the citing
     # document, the number, and the file the number is attributed to.  Line
@@ -1484,7 +1484,7 @@ def scan() -> dict:
                 # order the line puts it in: appended at the end, a link that
                 # sits at column 140 would outrank a name at column 219 and
                 # would own every number after it.
-                mentions.sort()
+                mentions.sort(); walked_numbers += len([_m for _m in NUMBER.finditer(line) if int(_m.group(1)) >= 1])
                 if not mentions:
                     # THE THIRD GROUP, counted nowhere else: the lines that
                     # name no tracked file.  It used to be counted in the
@@ -1974,7 +1974,7 @@ def scan() -> dict:
         "named_lines": named_lines, "target_lines": census_target_lines,
         "target_numbers": target_numbers,
         "unguarded_numbers": unguarded_numbers,
-        "unnamed_numbers": unnamed_numbers,
+        "unnamed_numbers": unnamed_numbers, "walked_numbers": walked_numbers,
         "files": files, "citations": citations,
     }
 
@@ -2325,6 +2325,19 @@ def main() -> int:
         f"{_reaching[0][3] or '<none>'}:{_reaching[0][2]} reads as "
         f"{_reaching[0][5][3]!r} at {abs(_reaching[0][2] - _reaching[0][5][2])} "
         "line(s). A rule that reached past the cited line must say it reached.",
+    )
+    # An identity needs no base and no pin; a pinned delta would be re-taken on
+    # every docs/ edit and describe only the tree it was re-taken on.
+    _census_sum = sum(r[k] for k in ("target_numbers", "unguarded_numbers",
+                                     "unnamed_numbers"))
+    cell(
+        "census-partition-broken",
+        needs_inputs,
+        None if _census_sum == r["walked_numbers"] else
+        f"the census groups sum to {_census_sum} ({r['target_numbers']} + "
+        f"{r['unguarded_numbers']} + {r['unnamed_numbers']}) but the scan walked "
+        f"past {r['walked_numbers']} number(s); the groups partition every line, "
+        "so one counter is counting a population it does not name",
     )
     cell(
         "hold-without-attribution",
