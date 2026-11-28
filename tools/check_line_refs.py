@@ -1458,6 +1458,7 @@ def scan() -> dict:
         if _ls and len(_ls) > _max_lines:
             _max_lines = len(_ls)
     impossible_numbers = 0
+    impossible_rows: list[tuple] = []
     files: set[str] = set()
     # One identity per reference, in the form a receipt can name: the citing
     # document, the number, and the file the number is attributed to.  Line
@@ -1518,6 +1519,11 @@ def scan() -> dict:
                 _big_here = [n for n in _nums_here if n > _max_lines]
                 walked_numbers += len(_nums_here)
                 impossible_numbers += len(_big_here)
+                # Built where the exclusion is APPLIED, not recomputed from the
+                # bound afterwards: a cell that re-derives the group would only
+                # be checking arithmetic, and would move with the counter.
+                for _n in _big_here:
+                    impossible_rows.append((rel, lineno, _n))
                 if not mentions:
                     # THE THIRD GROUP, counted nowhere else: the lines that
                     # name no tracked file.  It used to be counted in the
@@ -2010,6 +2016,7 @@ def scan() -> dict:
         "unguarded_numbers": unguarded_numbers,
         "unnamed_numbers": unnamed_numbers, "walked_numbers": walked_numbers,
         "impossible_numbers": impossible_numbers, "max_lines": _max_lines,
+        "impossible_rows": impossible_rows,
         "files": files, "citations": citations,
     }
 
@@ -2405,6 +2412,23 @@ def main() -> int:
         None if r["max_lines"] > 0 else
         "the longest-file bound is 0, so every number was filed as impossible "
         "to be a line number; the bound was not measured",
+    )
+    # The impossible-number group is a RULE, not a count. The count cannot be
+    # pinned -- measured 2026-11-28, the section describing it adds rows to it
+    # (13 on 4b5065fc, 22 with the section, 24 with its correction table) -- so
+    # the cell re-derives the group from the rows the scan published and
+    # compares.  A counter that drifted from its own input would red here, and
+    # a future edit that stopped excluding such a number would move both sides
+    # at once; that is why `impossible_rows` is built where the exclusion is
+    # applied, not recomputed from the bound afterwards.
+    _recount = len(r["impossible_rows"])
+    cell(
+        "impossible-group-contradicts-its-rule",
+        needs_inputs,
+        None if r["impossible_numbers"] == _recount else
+        f"{r['impossible_numbers']} number(s) were filed as too large to be a "
+        f"line number, but the rows that were set aside number {_recount}; the "
+        "counter and the evidence disagree",
     )
     _oor_over = [x for x in r["out_of_range"] if x[2] > r["max_lines"]]
     cell(
