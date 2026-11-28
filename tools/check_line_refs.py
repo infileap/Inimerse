@@ -662,6 +662,16 @@ WRITINGS = ("prefix", "prefix-range", "link+bare", "bare")
 # shape as the defect above: the question is not whether they agree today.
 GRADES = ("own", "borrowed", "symbol", "picked up")
 
+# Counts that MOVE WHEN THIS FILE'S CITING TEXT IS EDITED, measured rather than
+# assumed: append one line quoting `:1790919002` to docs/STATUS.md and re-scan,
+# and exactly these two change.  `impossible_numbers` and `walked_numbers`
+# count every number in docs/, so the prose that describes them is part of
+# their own input -- which is why neither may be written into a document as
+# "the" value (docs/STATUS.md 10.289).  The other nine counts are properties of
+# the citations, and a citation is a citation whether the sentence around it is
+# new or old.
+SELF_REFERENTIAL = ("impossible_numbers", "walked_numbers")
+
 # A count of the citations themselves, and the one thing it forbids is a
 # DECREASE.  The two pins above bound growth (an explicit delta, a ceiling on
 # the unanchored delta) and hold one equality; a reference that simply
