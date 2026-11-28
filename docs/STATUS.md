@@ -20911,3 +20911,128 @@ the gate prints and nothing reads.
 Making this change moved nothing, which suggests not, but "nothing moved"
 is not the same measurement as "nothing quotes it", and this round did
 not run the second one.
+
+## §10.285 — the census is a partition, and now it says so
+
+**1. Where this round starts.** §10.283 fixed a counter that sat one
+branch away from its own population, and §10.284 fixed a list that
+was one grade short. Both fixes are facts about one tree. Neither
+made the fix hold on the next tree, and both sections said so: the
+counts they repaired were printed and never asserted. §10.284 called
+that "one debt" across four readings. This round pays the part of it
+that can be paid without a pin that has to be re-taken on every
+`docs/` edit.
+
+**2. The identity, and why it is the right instrument.** The coverage
+sentence sorts every line of `docs/` into three groups: it names a
+target, it names a tracked file that is not a target, or it names no
+tracked file at all. That is a **partition** — the three cases are
+exhaustive and disjoint — so their counts must sum to every number the
+scan walks past. That is an identity, not a reading:
+
+- it is true on every tree, so it needs no base tree and no clock;
+- it needs no re-taking, so it cannot age into a lie;
+- it is false **exactly** when a counter is counting a population that
+  is not the one its name claims.
+
+The alternative — pinning the deltas against a base — was measured and
+rejected. On this tree the four deltas are `+2275`, `+297`, `+73`,
+`+1197`, `+656`. Every one of them moves on the next ordinary `docs/`
+edit, so a pin would have to be re-taken by whoever edits a document,
+and after the re-taking it would describe only the tree it was
+re-taken on. That is the same trap §10.282 recorded for `out_of_range`
+and §10.283 recorded for the census itself.
+
+**3. What was added.** One counter, incremented **before** the
+branches sort a line into a group:
+
+```
+walked_numbers += len([_m for _m in NUMBER.finditer(line) if ...])
+```
+
+and one cell asserting `target_numbers + unguarded_numbers +
+unnamed_numbers == walked_numbers`. Because the counter runs before
+the sort, a counter placed in the wrong branch now **breaks the
+identity** instead of quietly duplicating a neighbour's number — which
+is precisely the failure §10.283 spent a round on.
+
+**4. The controls.**
+
+```
+control: 10.283's defect reintroduced
+  FAIL census/unnamed -- ... unnamed_numbers says 3
+  FAIL partition/sum -- the three groups sum to 5 (1 + 1 + 3) but the scan
+       walked 4; the census is no longer a partition, so one counter is
+       reading another's population
+```
+
+`VERDICT|assertions=2|causes=2|...|cause=census-partition-broken` and the
+gate printed `the census groups sum to 11089 (1199 + 3937 + 5953) but
+the scan walked past 6201 number(s)`. Two independent instruments, each
+naming the same defect, from a single injected mistake — and note that
+**every pinned delta stayed green** while it was red, which is the
+measurement of why the pins could not see this defect for as long as it
+lived.
+
+The cell has a second assertion the identity alone would not give: the
+fixture carries four numbers and `walked_numbers` must read 4, so a
+counter that counts nothing at all cannot pass by making both sides
+zero.
+
+**5. The height, and what this round learned about it.** The first
+version of this change added four lines above line 2205, and
+`unanchored` went 562 → 563. §10.283 and §10.284 both recorded a
+height effect and both described it loosely. This round found the
+mechanism exactly: line 2205 of `tools/check_line_refs.py` is
+
+```
+    strict = "--strict" in args
+```
+
+and `docs/BOARD.md:64` [obs: 2ed42d2b] carries the span `--strict`, so **that line is
+the holder** of one of its references. Four inserted lines moved it to
+2209, the reference lost its holder, and the unanchored ratchet saw it.
+The additions are therefore folded onto existing lines — the
+initialiser rides on the previous statement, the accumulator shares
+`mentions.sort()`'s line, the dict key shares its neighbour's — so the
+file's own height is unchanged and no cited line moves.
+
+**This also corrects a method error this round made twice.** Comparing
+two checker variants by `importlib`-loading them both in one process
+measures nothing about height: `TREE` reads the file on disk, and the
+file on disk is the one `docs/` cites. Two variants loaded in one
+process agree by construction. The only measurement that means
+anything swaps the file on disk, runs, and swaps back.
+
+**6. The numbers now.** `held` 618, `unanchored` 562, `explicit` 185,
+`walked_numbers` 6201 with `1199 + 3937 + 1065`, and all four pins
+where the round started: `explicit delta +12 (expect +12)`, `unanchored
+delta -3 (ceiling +0)`, `coincidental delta +0`, `ambiguous delta +0`.
+`VERDICT|assertions=0|...|measured_cells=14`. `--self-check` reports
+`ok (6 checks)`; the suite is twenty-six cells.
+
+**7. What this round does not settle.**
+
+**This pays the identity half of §10.284's "one debt", not the count
+half.** `out_of_range` (40, split 19 held by another file and 21 held
+by nothing) is still printed and never asserted, and the per-grade
+counts still print without a comparison. The partition says the three
+census groups account for every number; it says nothing about whether
+40 is the right number of out-of-range references. That one needs a
+rule, not an identity, and a rule needs a pin — which is the thing
+this round just argued cannot be cheaply maintained for the census.
+Whether `out_of_range` is cheaply maintainable is a separate question
+this round did not measure.
+
+**The identity is only as good as `walked_numbers`.** Both sides of the
+assertion live in the same loop, sixteen lines apart. A change that
+moved both the counter and the accumulator the same way would keep the
+identity green while ceasing to describe the input. The cell's second
+assertion (four numbers in the fixture) narrows this; it does not close
+it.
+
+**Nothing yet pins `held_own`, `held_borrowed`, `held_symbol` or
+`held_picked` individually.** Their sum is `held`, which is pinned by
+existing cells, so a grade moving between two of them is invisible.
+§10.284 made the report *show* all four; this round did not make anyone
+*compare* them.
