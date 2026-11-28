@@ -22028,3 +22028,99 @@ than listing them.
 
 **The two dead exemptions from §10.292 are still dead**, unchanged by
 this round.
+
+## §10.294 — a suite that runs no cases reports success by arithmetic
+
+**1. Where this round starts.** §10.293 found this defect in one file and
+recorded it as *that file's* defect: deleting every case left
+`check_self_referential_counts --self-test` printing `ok (0 cases)` and
+exiting 0. A defect found in one file is a sample, not a census. This
+round asked every checker with a `--self-test` the same question.
+
+**2. The census, first by hand.** Emptying each case table and reading
+the exit code:
+
+| tool | empty table → |
+| --- | --- |
+| `check_encoding_damage` | rc=0 |
+| `check_probe_assertions` | rc=0 — printed `cases=2 … PASS` |
+| `check_probe_failure_paths` | rc=0 — printed `cases=0 … PASS` |
+| `check_scope_claims` | rc=0 |
+| `check_python_asserts` | rc=0 — printed `cases=3 … PASS` |
+| `check_doc_examples` | rc=0 |
+| `check_shared_tmp` | rc=0 — printed `cases=0 … PASS` |
+
+Seven, not one. All now exit 1 with a message naming §10.293.
+
+**3. Printing a case count is not a guard.** That is the finding worth
+keeping from the table. Three of the seven already printed a count and
+still passed:
+
+- `check_probe_failure_paths` printed `cases=0|red=0|verdict=PASS` — the
+  count was in the verdict and zero was not a failure;
+- `check_probe_assertions` printed `cases=2` because it reported
+  `len(cases) + 2`, counting two file-based assertions that run
+  regardless — **so its count could never reach zero**;
+- `check_python_asserts` had the same shape with `+ 3`.
+
+A number that cannot be zero cannot report a suite that ran nothing.
+
+**4. The census became a checker, and the checker was wrong three
+times.** `tools/check_empty_suites.py` copies each `tools/check_*.py`
+beside the original (so `REPO_ROOT` still resolves to this tree),
+empties its table, and requires a non-zero exit. Each of its three
+defects was found by it disagreeing with a manual run:
+
+| defect in the probe | symptom |
+| --- | --- |
+| emptied only the **first** table | `check_python_asserts` (two tables) still ran checks, called unguarded |
+| no **upper-case** tables | `check_shared_tmp` reported `NO-TABLE` — i.e. *unchecked* — while printing `cases=N` |
+| emptied the list the test **appends** to, not the one it **iterates** | a suite with a case outside its table called unguarded |
+
+The third produced a **false red**, and the fix was not to silence it:
+that tool's zero is genuinely unreachable, because one case lives after
+the loop. So `NOT-REACHABLE` is now its own outcome — a weaker
+guarantee, stated as such, rather than a pass or a failure.
+
+**5. The final census.** `19 suite(s) with --self-test; 10 guarded, 1
+with a case outside its table (zero not reachable), 8 without a case
+table, 0 unguarded`. Three outcomes and a skip, because "has no case
+table" and "has one that cannot be emptied" are different facts and
+neither is a pass — the distinction §10.287 cost a round to learn.
+
+The checker has its own two-case self-test: a synthetic tool that
+ignores an empty table must be called `UNGUARDED`, and one that refuses
+it must be called `GUARDED`. Registered as two CTests; `EXP_CTEST`
+235 → 237, recon token synced.
+
+**6. The numbers now.** `held` 618, `unanchored` 562, `explicit` 185,
+all four pins unmoved, `ctest 237`, `recon` `PASS`, `stage-count` clean,
+`line-refs` pins held.
+
+**7. What this round does not settle.**
+
+**Eight suites have no case table, and this checker does not judge
+them.** All eight run a hand-written sequence of assertions
+(`check_required_for`, `check_shape_assertions`, `check_shared_tmp`'s
+siblings) where "zero cases" is not a reachable state: the assertions
+execute unconditionally, so there is no list a deletion could empty and
+no `cases=0` to print. That was checked rather than assumed — a search
+for `CASE`-shaped names inside the eight found only the word "cases" in
+prose ("403 accepted cases", "Three cases, and all three must behave as
+stated"), never a table. So the skip is honest here.
+
+It is still a skip, and the probe cannot tell the two apart from the
+outside: a suite whose table is spelled in a shape the pattern does not
+recognise would also report `NO-TABLE`, which is *unchecked* wearing
+the same word as *out of scope*. That is the failure mode this round
+spent its time on, and it is not closed.
+
+**The probe still works by emptying, not by understanding.** A suite
+that builds cases conditionally on the tree (rather than from a list)
+would show `NO-TABLE` and be skipped. No such suite exists today;
+nothing would notice if one appeared.
+
+**A suite with one case outside its table is `NOT-REACHABLE`, not
+guarded.** If that single case were deleted, the suite would be back to
+reporting zero as success — and this checker would then see it, which
+is the right behaviour, but only on the next run.
