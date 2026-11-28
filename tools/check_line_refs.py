@@ -2330,6 +2330,37 @@ def main() -> int:
     # every docs/ edit and describe only the tree it was re-taken on.
     _census_sum = sum(r[k] for k in ("target_numbers", "unguarded_numbers",
                                      "unnamed_numbers"))
+    # The out-of-range bucket printed and never asserted for four rounds.
+    # What it must satisfy does not need a pin, because the rule is checkable
+    # against the rows themselves: a row says the owner's file has `size`
+    # lines and the cited number is `number`, so every row must have
+    # `number > size`.  A pinned count would have to be re-taken on every
+    # docs/ edit (the same argument the census cell makes); the rule holds on
+    # every tree.  Measured 2026-11-28: changing `>` to `>=` in the rule moved
+    # this bucket 40 -> 48 and left VERDICT|assertions=0 -- the pins and every
+    # cell stayed green while the bucket was wrong, which is the exact
+    # mutation 10.282 named as unfixed.
+    _oor_bad = [x for x in r["out_of_range"] if not x[2] > x[4]]
+    cell(
+        "out-of-range-rule-broken",
+        needs_inputs,
+        None if not _oor_bad else
+        f"{len(_oor_bad)} row(s) in the out-of-range bucket do not satisfy the "
+        f"rule that put them there: {_oor_bad[0][0]}:{_oor_bad[0][1]} cites "
+        f":{_oor_bad[0][2]} of {_oor_bad[0][3]}, which the row says has "
+        f"{_oor_bad[0][4]} line(s). A row in this bucket whose number fits "
+        "inside its own file is a reference counted as impossible when it "
+        "was only unanchored",
+    )
+    cell(
+        "out-of-range-split-broken",
+        needs_inputs,
+        None if r["oor_held"] + r["oor_bare"] == len(r["out_of_range"]) else
+        f"the out-of-range split does not add up: {r['oor_held']} held by "
+        f"another file + {r['oor_bare']} held by nothing = "
+        f"{r['oor_held'] + r['oor_bare']}, but the bucket holds "
+        f"{len(r['out_of_range'])} row(s)",
+    )
     cell(
         "census-partition-broken",
         needs_inputs,

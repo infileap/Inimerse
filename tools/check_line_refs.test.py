@@ -1480,6 +1480,7 @@ def main() -> int:
     failures += check_the_census_groups_are_distinct()
     failures += check_every_grade_has_a_report_line()
     failures += check_census_partition_is_an_identity()
+    failures += check_out_of_range_rows_fit_their_rule()
 
     if failures:
         print(f"check_line_refs.test.py: {failures} cell(s) differed")
@@ -2131,6 +2132,70 @@ def check_census_partition_is_an_identity() -> int:
               f"{r['unguarded_numbers']} + {r['unnamed_numbers']}) but the scan "
               f"walked {r['walked_numbers']}; the census is no longer a "
               "partition, so one counter is reading another's population")
+    return failures
+
+
+# --- cell: the out-of-range bucket holds rows that satisfy its own rule ---
+#
+# The bucket printed for four rounds and was asserted by nothing (10.282 named
+# it, 10.283 repeated it, 10.284 called it part of one debt, 10.285 paid the
+# census half only).  The mutation 10.282 predicted -- an off-by-one in the
+# rule -- was then measured: `number > len` -> `number >= len` moved the bucket
+# from 40 to 48 and left VERDICT|assertions=0.  Every pin stayed green while
+# the bucket was wrong, because no pin reads it.
+#
+# What can be asserted without the tree is the rule itself: each row carries
+# the cited number AND the size the row says its owner has, so a row whose
+# number fits inside that size is a reference the bucket called impossible
+# when it was not.
+oof_DOC = "docs/fix/oor-rule.md"
+oof_OWNER = "CMakeLists.txt"
+oof_TEXT = "\n".join(
+    [
+        "# fixture",
+        "",
+        "`CMakeLists.txt` cites `deep_word` at `:99`.",
+        "",
+        "`CMakeLists.txt` cites `deep_word` at `:7`, the file's last line.",
+        "",
+        "`CMakeLists.txt` cites `deep_word` at `:3`.",
+    ]
+) + "\n"
+oof_OWNER_TEXT = "\n".join(
+    ["# fixture", "", "set(A 1)", "set(B 2)", "set(C 3)", "set(D 4)", "set(E 5)"]
+) + "\n"
+
+
+def check_out_of_range_rows_fit_their_rule() -> int:
+    """Every row in the bucket has number > size, and the split adds up."""
+    failures = 0
+    r = scan_with({oof_DOC: oof_TEXT, oof_OWNER: oof_OWNER_TEXT})
+    rows = [x for x in r["out_of_range"] if x[0] == oof_DOC]
+    if len(rows) != 1:
+        failures += 1
+        print("check_line_refs.test.py: FAIL oor/rule-count -- one of the two "
+              "numbers (`:99`) is past the end of a seven-line file and the "
+              f"other (`:3`) is not; the bucket has {len(rows)} row(s) for "
+              f"this document: {rows!r}")
+        return failures
+    _rel, _lineno, number, _owner, size = rows[0]
+    if not number > size:
+        failures += 1
+        print("check_line_refs.test.py: FAIL oor/rule-fields -- a row in the "
+              f"bucket must satisfy number > size; this one says :{number} of "
+              f"a {size}-line file")
+    if r["oor_held"] + r["oor_bare"] != len(r["out_of_range"]):
+        failures += 1
+        print("check_line_refs.test.py: FAIL oor/split -- the split must add "
+              f"up: {r['oor_held']} + {r['oor_bare']} != "
+              f"{len(r['out_of_range'])}")
+    # The number that DOES fit must not be in the bucket -- otherwise the
+    # assertion above would pass on a bucket that also contains legal rows.
+    if any(x[2] in (3, 7) for x in rows):
+        failures += 1
+        print("check_line_refs.test.py: FAIL oor/inside -- `:3` and `:7` of a "
+              "seven-line file are both inside it and must not be called out "
+              f"of range: {[x[2] for x in rows]!r}")
     return failures
 
 
