@@ -1974,6 +1974,14 @@ set_tests_properties(self_referential_counts_regression PROPERTIES WORKING_DIREC
 add_test(NAME self_referential_counts_selfcheck_regression
          COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/gated_run.py --shape "check_self_referential_counts --self-test: ok \\([0-9]+ cases\\)" --exit 0 -- ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_self_referential_counts.py --self-test)
 set_tests_properties(self_referential_counts_selfcheck_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 120 LABELS "docs;regression")
+# The exemptions in that checker are holes by design.  A mutation audit of the
+# six sites found two with no case -- and deleting either changed nothing on the
+# tree either, so they were exemptions with neither a case nor a user.  The
+# audit is a tool so a future widening cannot be invisible, and it asserts the
+# number of exemption sites, because an audit only knows the mutations it lists.
+add_test(NAME self_ref_mutation_audit_regression
+         COMMAND ${INIMERSE_PYTHON} ${CMAKE_SOURCE_DIR}/tools/self_ref_mutation_audit.py --report)
+set_tests_properties(self_ref_mutation_audit_regression PROPERTIES WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} TIMEOUT 300 LABELS "docs;regression")
 # The ledger arithmetic and the two parsers, on inputs whose answer is known --
 # including the ones the ledger has to reject.  No build output, no corpus.
 add_test(NAME aot_mir_cover_selfcheck_regression
