@@ -254,6 +254,14 @@ def selftest() -> int:
         print(f"check_self_referential_counts --self-test: {failures} case(s) "
               "differed")
         return 1
+    if not cases:
+        print(
+            "check_self_referential_counts --self-test: FAIL -- no cases. A "
+            "self-test that runs zero cases reports success by arithmetic "
+            "alone, so it cannot be told apart from a working one",
+            file=sys.stderr,
+        )
+        return 1
     print(f"check_self_referential_counts --self-test: ok ({len(cases)} cases)")
     return 0
 

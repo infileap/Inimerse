@@ -21907,3 +21907,124 @@ deletion is visible, but no line in `docs/` needs them. Whether they
 should exist at all is a question about the rule, not the checker, and
 this round chose to keep them with cases rather than delete them —
 a choice stated here so a future reader can disagree with it.
+
+## §10.293 — a narrowed exemption keeps its anchor
+
+**1. Where this round starts.** §10.292 §8 stated this and left it open:
+
+> *"The audit still only covers the mutations somebody thought of. The
+> site count closes the 'new hole' gap, not the 'same hole, different
+> widening' gap: an exemption rewritten to be **narrower** (excluding
+> more) would keep its site count and its anchor, and no case asserts
+> the narrowing."*
+
+That is a claim, and claims about coverage are measurable. Measured
+with three narrowings, each keeping every anchor the audit uses:
+
+| narrowing | self-test | audit |
+| --- | --- | --- |
+| `INLINE_TREE` → `` `4b5065fc` `` | 14 ok | **6/6** |
+| `RECORD_MARKER` → `` [obs:\s*(4b5065fc)] `` | 14 ok | **6/6** |
+| `INLINE_TREE` → `` `[0-9a-f]{7,20}` `` | 14 ok | **6/6** |
+
+All three invisible. The third is the worst: it is a narrowing of the
+**upper bound** only, so seven-character refs still work and only long
+ones break.
+
+**2. The cause was case coverage, and it was narrower than it looked.**
+The round's first instinct was that the audit needed a new mutation —
+but adding one would have hidden the real problem, which is that the
+**cases** could not see the change. Two specific gaps:
+
+**The inline-tree case used one ref.** A pattern narrowed to that ref
+passes the case; a pattern narrowed to a 7–20 range also passes.
+
+**The maximum-length case used the marker form.** `RECORD_MARKER`
+accepts `[^]]*` — any content — so a 40-character ref in a marker is
+exempt regardless of `INLINE_TREE`'s bound. The **inline** pattern's
+length bound had never been exercised at either end. Measured: with
+`INLINE_TREE` narrowed to `{7,20}`, every case stayed green.
+
+**3. The repair is five cases, at both ends and in both forms.** Cases
+14 → 19: refs of minimum length (7), maximum length (40), and a
+non-resolving one (`deadbeef`), each in the marker form **and** in the
+inline form. All three narrowings are now caught:
+
+```
+FAIL 'an inline ref of the maximum length': expected violation=False,
+     got True for 'the scan walked past 6238 number(s) on `aaaa…aaaa`.'
+```
+
+**4. The audit grew the two regex sites.** Deletion and widening were
+in the mutation list; narrowing was not. Two mutations added —
+`inline-tree pattern narrowed to one ref`, `record marker narrowed to
+one ref` — bringing the audit to **8/8**.
+
+**5. The first control passed while the cases were gone, and that was
+the useful result.** The control deleted the new length cases and
+re-ran the audit; it reported `8/8` — clean, with the cases missing.
+That is a control which says "these cases do not matter", and it was
+nearly written up as one. Reading it again:
+
+- the two mutations then in the audit were *narrowed-to-one-ref*, which
+  the **minimum**-length cases catch;
+- the **maximum**-length case catches a **narrowed upper bound**, and
+  no mutation in the audit exercised that.
+
+So the max-length case was load-bearing in principle and unguarded in
+practice, and the control had found exactly that. A mutation was added
+for it, and the same control now fails:
+
+```
+drop the max-length inline case
+  -> audit: inline-tree upper bound narrowed (MISSED), 8/9
+```
+
+`9/9` restored. The general form of the mistake is worth stating: **a
+control that passes for the wrong reason and a control that fails for
+the right reason look identical until you read which mutation it was.**
+
+**6. The numbers now.** `check_self_referential_counts --self-test: ok
+(19 cases)`; `self_ref_mutation_audit: 8/8 mutation(s) caught`; the
+real scan clean; `held` 618, `unanchored` 562, `explicit` 185, all four
+pins unmoved; `ctest 235`, `recon` `PASS`.
+
+**7. What this round does not settle.**
+
+**The audit does not have the property this section first claimed.** It
+said "every mutation has a case that bites it", checked by deleting
+each case in turn. Run properly, that check says something else: of
+**nineteen cases, only two are uniquely load-bearing.** Deleting either
+of the other seventeen leaves the audit green, because another case
+catches the same mutation.
+
+Two are enough to be load-bearing *collectively*, and that is the
+honest claim: the case set covers the mutation set. What the round
+found, and what makes the claim worth stating carefully, is that
+"deleting a case still passes" is not by itself evidence of a spare
+case. **Redundancy and decoration look identical from that test alone**,
+and only reading which mutation a case catches tells them apart.
+
+**And the audit found one more defect while this was being written.** With
+every case deleted, `--self-test` printed
+
+```
+check_self_referential_counts --self-test: ok (0 cases)
+```
+
+and exited 0. A self-test that runs no cases reports success by
+arithmetic. That cannot be caught by a case — the case that would
+notice is the one being deleted — so it is asserted as a **property**
+instead: the audit deletes the whole list on a copy and requires a
+non-zero exit. Guard added, audit now **10/10**, and the property is
+red when the guard is removed.
+
+**Case coverage is still enumerated by hand.** This round found two
+gaps by trying three narrowings somebody thought of. The property that
+would close the class — "for every pattern in this file, its accepted
+language is exercised at both extremes" — is not asserted anywhere,
+and writing it would mean generating cases from the patterns rather
+than listing them.
+
+**The two dead exemptions from §10.292 are still dead**, unchanged by
+this round.

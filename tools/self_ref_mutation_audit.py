@@ -86,6 +86,24 @@ MUTATIONS = (
         'RECORD_MARKER = re.compile(r"\\[obs:\\s*([^\\]]*)\\]")',
         'RECORD_MARKER = re.compile(r"\\[obs:\\s*(4b5065fc)\\]")',
     ),
+    # A narrowing of the UPPER BOUND only: short refs still work, long ones
+    # stop.  Measured 2026-11-28: no mutation covered this, and with the audit
+    # at 8/8 the only thing that could see it was a human running the
+    # self-test against that edit -- so an edit that also dropped the case
+    # would leave every automated check green.
+    # Deleting the guard that makes an empty case list red.  Measured
+    # 2026-11-28: with it, `--self-test` on zero cases printed
+    # `ok (0 cases)` and exited 0 -- a green produced by a deletion, which is
+    # the shape this repository keeps paying for.
+    # Not in MUTATIONS: the empty-case guard cannot be covered by a case -- a
+    # case list that is empty cannot contain the case that notices.  It is
+    # checked by `_empty_case_guard_works` below, which asks a different
+    # question (does an empty list exit non-zero?) rather than the same one.
+    (
+        "inline-tree upper bound narrowed",
+        'INLINE_TREE = re.compile(r"`[0-9a-f]{7,40}`")',
+        'INLINE_TREE = re.compile(r"`[0-9a-f]{7,20}`")',
+    ),
 )
 
 
@@ -104,6 +122,31 @@ def _exemption_sites(src: str) -> int:
     if m is None:
         return -1
     return m.group(0).count("return None")
+
+
+def _empty_case_guard_works() -> "tuple[bool, str]":
+    """Deleting every case must make --self-test exit non-zero.
+
+    Measured 2026-11-28: with no guard, `--self-test` on an empty case list
+    printed `ok (0 cases)` and exited 0.  No case can catch that -- the case
+    that would is in the list being deleted -- so the property is asserted
+    directly, on a copy, the same way the mutations are.
+    """
+    import re
+    src = CHECKER.read_text(encoding="utf-8")
+    m = re.search(r"    cases = \[\n(.*?)\n    \]\n", src, re.S)
+    if m is None:
+        return False, "could not find the case list"
+    with tempfile.TemporaryDirectory(dir=CHECKER.parent) as tmp:
+        copy = Path(tmp) / CHECKER.name
+        copy.write_text(src.replace(m.group(1), ""), encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(copy), "--self-test"],
+            capture_output=True, text=True, cwd=str(REPO_ROOT),
+        )
+    if r.returncode == 0:
+        return False, "an empty case list exits 0"
+    return True, "an empty case list exits non-zero"
 
 
 def audit() -> dict:
@@ -160,6 +203,12 @@ def main() -> int:
         return 2
 
     r = audit()
+    ok, why = _empty_case_guard_works()
+    r["results"].append({
+        "label": "empty case list is a failure",
+        "outcome": "CAUGHT" if ok else "MISSED",
+        "detail": why,
+    })
     missed = [x for x in r["results"] if x["outcome"] != "CAUGHT"]
     if args.report:
         for x in r["results"]:
