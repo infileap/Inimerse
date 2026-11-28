@@ -1,0 +1,9 @@
+{
+  "allowed": 1,
+  "items": [
+    {
+      "identity": "docs/STATUS.md|1790919002|tools/gate.sh",
+      "why": "Not a citation. docs/STATUS.md:1011 quotes a JSON response body, `\"expires\":1790919002`, and the position rule attributed that number to a `tools/gate.sh` named 407 characters earlier on the same line. tools/gate.sh is 1482 lines long and 1790919002 is an epoch timestamp, so the row was never a reference to a line. It was counted as out of range -- 'a line that does not exist in the file it names' -- which was true and irrelevant. The checker now refuses to grade any number larger than the longest file in the tree, so this address stops being counted; the removal is a correction, not lost coverage."
+    }
+  ]
+}

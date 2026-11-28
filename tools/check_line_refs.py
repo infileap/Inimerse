@@ -1436,6 +1436,28 @@ def scan() -> dict:
     # They are counted so that the coverage sentence accounts for EVERY
     # `:N` in docs/ and not only the ones this checker can act on.
     unnamed_numbers = walked_numbers = 0   # walked = every number; see the cell
+    # A number larger than the longest file in the tree cannot be a line number
+    # in it.  Measured 2026-11-28 on e58c949: docs/STATUS.md:1011 quotes a JSON
+    # body, "expires":1790919002, and the position rule gave that number to a
+    # `tools/gate.sh` named 407 characters earlier on the line -- so it entered
+    # `out_of_range` as "a line that does not exist in the file it names", true
+    # and beside the point: it is not a reference.  The bound is a property of
+    # the tree, not a constant: the longest file grew 21503 -> 26140 between
+    # 1c6b338 and today.
+    _max_lines = 0
+    for _rel in sorted(TREE._tracked()):
+        if not _rel:
+            continue
+        try:
+            _ls = TREE.lines(_rel)
+        except SystemExit:
+            # A base tree can list a path the ref does not carry, and `lines`
+            # refuses rather than guessing.  The bound must not turn "this ref
+            # has one fewer file" into "no number is possible".
+            continue
+        if _ls and len(_ls) > _max_lines:
+            _max_lines = len(_ls)
+    impossible_numbers = 0
     files: set[str] = set()
     # One identity per reference, in the form a receipt can name: the citing
     # document, the number, and the file the number is attributed to.  Line
@@ -1484,16 +1506,24 @@ def scan() -> dict:
                 # order the line puts it in: appended at the end, a link that
                 # sits at column 140 would outrank a name at column 219 and
                 # would own every number after it.
-                mentions.sort(); walked_numbers += len([_m for _m in NUMBER.finditer(line) if int(_m.group(1)) >= 1])
+                mentions.sort()
+                _nums_here = [int(_m.group(1)) for _m in NUMBER.finditer(line)
+                              if int(_m.group(1)) >= 1]
+                # A number larger than the longest file in the tree cannot be a
+                # line number in it, so it belongs to this group and to no
+                # other -- counted on EVERY line, including the ones that name
+                # no file, or the group would mean something different here
+                # than the sentence says (measured: 4 on named lines vs 13 in
+                # the whole tree, 2026-11-28).
+                _big_here = [n for n in _nums_here if n > _max_lines]
+                walked_numbers += len(_nums_here)
+                impossible_numbers += len(_big_here)
                 if not mentions:
                     # THE THIRD GROUP, counted nowhere else: the lines that
                     # name no tracked file.  It used to be counted in the
                     # `else` below -- the group that DOES name one -- so the
                     # number this report printed third was its second again.
-                    unnamed_numbers += sum(
-                        1 for _m in NUMBER.finditer(line)
-                        if int(_m.group(1)) >= 1
-                    )
+                    unnamed_numbers += len(_nums_here) - len(_big_here)
                     continue
                 names_a_target = any(tok in TARGETS for _s, _e, tok in mentions)
                 # THE CENSUS.  Every line in docs/ that names a tracked file
@@ -1514,6 +1544,10 @@ def scan() -> dict:
                 for m in NUMBER.finditer(line):
                     number = int(m.group(1))
                     if number < 1:
+                        continue
+                    if number > _max_lines:
+                        # Counted in `impossible_numbers` above; a number that
+                        # cannot be a line number is graded by nothing.
                         continue
                     if names_a_target:
                         target_numbers += 1
@@ -1975,6 +2009,7 @@ def scan() -> dict:
         "target_numbers": target_numbers,
         "unguarded_numbers": unguarded_numbers,
         "unnamed_numbers": unnamed_numbers, "walked_numbers": walked_numbers,
+        "impossible_numbers": impossible_numbers, "max_lines": _max_lines,
         "files": files, "citations": citations,
     }
 
@@ -2247,7 +2282,10 @@ def main() -> int:
         f"and are NOT graded here: this checker reads the references to its "
         f"targets, not every reference in docs/.  {r['unnamed_numbers']} more "
         f"number(s) sit on lines that name no tracked file at all, and are "
-        f"not references to this tree."
+        f"not references to this tree.  {r['impossible_numbers']} number(s) "
+        f"exceed the longest file in the tree ({r['max_lines']} line(s)), so "
+        f"no file in it could have that line: they are counted and never "
+        f"graded, because a JSON value or an epoch is not an address."
     )
     print(
         "check_line_refs: writings -- "
@@ -2329,7 +2367,7 @@ def main() -> int:
     # An identity needs no base and no pin; a pinned delta would be re-taken on
     # every docs/ edit and describe only the tree it was re-taken on.
     _census_sum = sum(r[k] for k in ("target_numbers", "unguarded_numbers",
-                                     "unnamed_numbers"))
+                                     "unnamed_numbers", "impossible_numbers"))
     # The out-of-range bucket printed and never asserted for four rounds.
     # What it must satisfy does not need a pin, because the rule is checkable
     # against the rows themselves: a row says the owner's file has `size`
@@ -2358,6 +2396,27 @@ def main() -> int:
         "symbol": r["held_symbol"], "picked up": r["held_picked"],
     }
     _grade_sum = sum(_grade_counts.values())
+    # The bound the impossible-number group rests on is a property of the tree,
+    # so it is measured rather than assumed: a scan that read no file at all
+    # would compute 0 and file every number as impossible.
+    cell(
+        "impossible-bound-unmeasured",
+        needs_inputs,
+        None if r["max_lines"] > 0 else
+        "the longest-file bound is 0, so every number was filed as impossible "
+        "to be a line number; the bound was not measured",
+    )
+    _oor_over = [x for x in r["out_of_range"] if x[2] > r["max_lines"]]
+    cell(
+        "out-of-range-holds-a-number-no-file-could-have",
+        needs_inputs,
+        None if not _oor_over else
+        f"{len(_oor_over)} row(s) in the out-of-range bucket cite a number "
+        f"larger than the longest file in the tree ({r['max_lines']}): "
+        f"{_oor_over[0][0]} cites :{_oor_over[0][2]} of {_oor_over[0][3]}. "
+        "Such a number is not an address; it is a JSON value or an epoch, and "
+        "the position rule attributed it to a filename earlier on the line",
+    )
     cell(
         "grade-sum-broken",
         needs_inputs,
@@ -2406,8 +2465,9 @@ def main() -> int:
         needs_inputs,
         None if _census_sum == r["walked_numbers"] else
         f"the census groups sum to {_census_sum} ({r['target_numbers']} + "
-        f"{r['unguarded_numbers']} + {r['unnamed_numbers']}) but the scan walked "
-        f"past {r['walked_numbers']} number(s); the groups partition every line, "
+        f"{r['unguarded_numbers']} + {r['unnamed_numbers']} + "
+        f"{r['impossible_numbers']}) but the scan walked past "
+        f"{r['walked_numbers']} number(s); the groups partition every line, "
         "so one counter is counting a population it does not name",
     )
     cell(

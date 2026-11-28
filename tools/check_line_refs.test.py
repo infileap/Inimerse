@@ -63,6 +63,16 @@ NOISE = "docs/fix/noise.md"
 OTHER = "tools/gate.sh"
 SRC = "CMakeLists.txt"
 
+
+# The impossible-number rule (check_line_refs.py) refuses to grade a number
+# larger than the longest file in the tree.  A fixture whose biggest file is
+# seven lines makes every `:99` "impossible", which is not what those cells are
+# about: they test a number that is past the END OF ITS OWN FILE but could
+# exist elsewhere in the tree.  This file supplies that elsewhere.  It is named
+# by nothing, so it adds no reference -- only the bound.
+BIG_SPAN_TEXT = "\n".join(f"line {i}" for i in range(1, 4001)) + "\n"
+BIG_SPAN = "src/fix/big.txt"
+
 # The citing line.  `noise.md` first, `tools/gate.sh` second, `CMakeLists.txt`
 # last -- so the owner of `:7` is CMakeLists.txt, by the position rule.
 DOC_TEXT = (
@@ -1645,7 +1655,8 @@ def check_out_of_range_without_a_holder() -> int:
     """A number past the end of its file is out of range with no holder too."""
     failures = 0
     r = scan_with(
-        {oor2_DOC: oor2_TEXT, oor2_OTHER: oor2_OTHER_TEXT, oor2_OWNER: oor2_OWNER_TEXT}
+        {oor2_DOC: oor2_TEXT, oor2_OTHER: oor2_OTHER_TEXT,
+         oor2_OWNER: oor2_OWNER_TEXT, BIG_SPAN: BIG_SPAN_TEXT}
     )
     if len(r["out_of_range"]) != 1:
         failures += 1
@@ -1994,7 +2005,7 @@ def check_the_census_groups_are_distinct() -> int:
     failures = 0
     r = scan_with(
         {census_DOC: census_TEXT, "tools/gate.sh": census_OTHER_TEXT,
-         census_NOTES: census_NOTES_TEXT}
+         census_NOTES: census_NOTES_TEXT, BIG_SPAN: BIG_SPAN_TEXT}
     )
     # Two lines name a tracked file (the target line and the notes line); of
     # those, one names a target and carries one number.
@@ -2118,7 +2129,7 @@ def check_census_partition_is_an_identity() -> int:
     failures = 0
     r = scan_with(
         {part_DOC: part_TEXT, "tools/gate.sh": cnt_OTHER_TEXT,
-         part_NOTES: cnt_OTHER_TEXT}
+         part_NOTES: cnt_OTHER_TEXT, BIG_SPAN: BIG_SPAN_TEXT}
     )
     total = r["target_numbers"] + r["unguarded_numbers"] + r["unnamed_numbers"]
     if r["walked_numbers"] != 4:
@@ -2170,7 +2181,8 @@ oof_OWNER_TEXT = "\n".join(
 def check_out_of_range_rows_fit_their_rule() -> int:
     """Every row in the bucket has number > size, and the split adds up."""
     failures = 0
-    r = scan_with({oof_DOC: oof_TEXT, oof_OWNER: oof_OWNER_TEXT})
+    r = scan_with({oof_DOC: oof_TEXT, oof_OWNER: oof_OWNER_TEXT,
+                   BIG_SPAN: BIG_SPAN_TEXT})
     rows = [x for x in r["out_of_range"] if x[0] == oof_DOC]
     if len(rows) != 1:
         failures += 1
